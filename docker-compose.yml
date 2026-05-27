@@ -1,0 +1,11 @@
+services:
+  kanban:
+    build: .
+    container_name: kanban
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/data
+    environment:
+      KANBAN_DATA: /data/board.json

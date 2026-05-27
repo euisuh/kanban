@@ -1,0 +1,10 @@
+.env
+.env.*
+CLAUDE.md
+*.pem
+*.key
+__pycache__/
+.pytest_cache/
+.coverage
+data/
+*.pyc
