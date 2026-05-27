@@ -20,6 +20,9 @@ Open `http://<homeserver-ip>:8080`.
 
 Board data is stored at `./data/board.json` by default.
 
+For reverse-proxy deployments, set `KANBAN_CREDENTIAL=user:password` in `.env`.
+The app will require HTTP Basic Auth when that variable is present.
+
 ## Config
 
 | Variable | Default | Purpose |
@@ -27,6 +30,7 @@ Board data is stored at `./data/board.json` by default.
 | `KANBAN_HOST` | `127.0.0.1` | Bind host for local Python runs |
 | `KANBAN_PORT` | `8080` | HTTP port |
 | `KANBAN_DATA` | `data/board.json` | JSON storage file |
+| `KANBAN_CREDENTIAL` | empty | Optional Basic Auth credential as `user:password` |
 
 ## Features
 

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import base64
 import json
 import mimetypes
 import os
+import secrets
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -22,7 +24,19 @@ def store_from_env() -> BoardStore:
 class KanbanHandler(BaseHTTPRequestHandler):
     store = store_from_env()
 
+    def do_HEAD(self) -> None:
+        if not self._authorized():
+            return
+        parsed = urlparse(self.path)
+        if parsed.path == "/api/board":
+            self._json(HTTPStatus.OK, self.store.load(), send_body=False)
+            return
+
+        self._static(parsed.path, send_body=False)
+
     def do_GET(self) -> None:
+        if not self._authorized():
+            return
         parsed = urlparse(self.path)
         if parsed.path == "/api/board":
             self._json(HTTPStatus.OK, self.store.load())
@@ -31,6 +45,8 @@ class KanbanHandler(BaseHTTPRequestHandler):
         self._static(parsed.path)
 
     def do_POST(self) -> None:
+        if not self._authorized():
+            return
         parsed = urlparse(self.path)
         if parsed.path == "/api/cards":
             payload = self._payload()
@@ -45,6 +61,8 @@ class KanbanHandler(BaseHTTPRequestHandler):
         self._json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
 
     def do_PATCH(self) -> None:
+        if not self._authorized():
+            return
         parsed = urlparse(self.path)
         prefix = "/api/cards/"
         if parsed.path.startswith(prefix):
@@ -56,6 +74,8 @@ class KanbanHandler(BaseHTTPRequestHandler):
         self._json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
 
     def do_DELETE(self) -> None:
+        if not self._authorized():
+            return
         parsed = urlparse(self.path)
         prefix = "/api/cards/"
         if parsed.path.startswith(prefix):
@@ -67,6 +87,25 @@ class KanbanHandler(BaseHTTPRequestHandler):
 
     def log_message(self, fmt: str, *args: object) -> None:
         print("%s - %s" % (self.address_string(), fmt % args))
+
+    def _authorized(self) -> bool:
+        credential = os.environ.get("KANBAN_CREDENTIAL", "")
+        if not credential:
+            return True
+
+        expected = "Basic " + base64.b64encode(credential.encode("utf-8")).decode("ascii")
+        actual = self.headers.get("authorization", "")
+        if secrets.compare_digest(actual, expected):
+            return True
+
+        body = b"Authentication required\n"
+        self.send_response(HTTPStatus.UNAUTHORIZED)
+        self.send_header("www-authenticate", 'Basic realm="Kanban"')
+        self.send_header("content-type", "text/plain; charset=utf-8")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+        return False
 
     def _payload(self) -> dict[str, object]:
         length = int(self.headers.get("content-length", "0") or "0")
@@ -81,7 +120,7 @@ class KanbanHandler(BaseHTTPRequestHandler):
             raise ValueError("JSON object required")
         return payload
 
-    def _static(self, path: str) -> None:
+    def _static(self, path: str, send_body: bool = True) -> None:
         relative = "index.html" if path in {"", "/"} else path.lstrip("/")
         target = (STATIC / relative).resolve()
         if STATIC not in target.parents and target != STATIC:
@@ -97,9 +136,10 @@ class KanbanHandler(BaseHTTPRequestHandler):
         self.send_header("content-type", mime or "application/octet-stream")
         self.send_header("content-length", str(len(body)))
         self.end_headers()
-        self.wfile.write(body)
+        if send_body:
+            self.wfile.write(body)
 
-    def _json(self, status: HTTPStatus, body: object | None) -> None:
+    def _json(self, status: HTTPStatus, body: object | None, send_body: bool = True) -> None:
         self.send_response(status)
         if body is None:
             self.send_header("content-length", "0")
@@ -109,7 +149,8 @@ class KanbanHandler(BaseHTTPRequestHandler):
         self.send_header("content-type", "application/json")
         self.send_header("content-length", str(len(data)))
         self.end_headers()
-        self.wfile.write(data)
+        if send_body:
+            self.wfile.write(data)
 
     def handle_one_request(self) -> None:
         try:

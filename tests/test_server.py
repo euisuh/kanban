@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import os
 import threading
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -26,7 +27,10 @@ def request(port: int, method: str, path: str, body: dict[str, Any] | None = Non
     res = conn.getresponse()
     data = res.read()
     conn.close()
-    parsed = json.loads(data.decode("utf-8")) if data else None
+    try:
+        parsed = json.loads(data.decode("utf-8")) if data else None
+    except json.JSONDecodeError:
+        parsed = data.decode("utf-8")
     return res.status, parsed
 
 
@@ -59,5 +63,60 @@ def test_card_api_lifecycle(tmp_path: Path) -> None:
         assert status == 204
         assert body is None
     finally:
+        server.shutdown()
+        thread.join(timeout=2)
+
+
+def test_basic_auth_gate(tmp_path: Path) -> None:
+    os.environ["KANBAN_CREDENTIAL"] = "kanban:secret"
+    HandlerForTest.store = BoardStore(tmp_path / "board.json")
+    server = ThreadingHTTPServer(("127.0.0.1", 0), HandlerForTest)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    port = server.server_address[1]
+
+    try:
+        status, body = request(port, "GET", "/api/board")
+        assert status == 401
+        assert body == "Authentication required\n"
+
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+        conn.request("GET", "/api/board", headers={"authorization": "Basic a2FuYmFuOnNlY3JldA=="})
+        res = conn.getresponse()
+        data = json.loads(res.read().decode("utf-8"))
+        conn.close()
+
+        assert res.status == 200
+        assert data["columns"][0]["id"] == "backlog"
+    finally:
+        os.environ.pop("KANBAN_CREDENTIAL", None)
+        server.shutdown()
+        thread.join(timeout=2)
+
+
+def test_head_requires_basic_auth(tmp_path: Path) -> None:
+    os.environ["KANBAN_CREDENTIAL"] = "kanban:secret"
+    HandlerForTest.store = BoardStore(tmp_path / "board.json")
+    server = ThreadingHTTPServer(("127.0.0.1", 0), HandlerForTest)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    port = server.server_address[1]
+
+    try:
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+        conn.request("HEAD", "/")
+        res = conn.getresponse()
+        res.read()
+        conn.close()
+        assert res.status == 401
+
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+        conn.request("HEAD", "/", headers={"authorization": "Basic a2FuYmFuOnNlY3JldA=="})
+        res = conn.getresponse()
+        res.read()
+        conn.close()
+        assert res.status == 200
+    finally:
+        os.environ.pop("KANBAN_CREDENTIAL", None)
         server.shutdown()
         thread.join(timeout=2)
