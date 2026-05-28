@@ -9,3 +9,5 @@ __pycache__/
 .coverage
 data/
 *.pyc
+app/static/uploads/*
+!app/static/uploads/.gitkeep

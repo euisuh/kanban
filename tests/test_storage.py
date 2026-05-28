@@ -37,3 +37,70 @@ def test_rejects_invalid_card(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError):
         store.create_card("Nope", "", "missing")
+
+
+def test_card_has_project_and_priority_defaults(tmp_path: Path) -> None:
+    store = BoardStore(tmp_path / "board.json")
+    card = store.create_card("Task", "", "backlog")
+    assert card["project"] == ""
+    assert card["priority"] == 4
+
+
+def test_card_create_accepts_project_and_priority(tmp_path: Path) -> None:
+    store = BoardStore(tmp_path / "board.json")
+    card = store.create_card("Task", "", "backlog", project="Auth", priority=1)
+    assert card["project"] == "Auth"
+    assert card["priority"] == 1
+
+
+def test_update_card_project_and_priority(tmp_path: Path) -> None:
+    store = BoardStore(tmp_path / "board.json")
+    card = store.create_card("Task", "", "backlog")
+    updated = store.update_card(card["id"], {"project": "Design", "priority": 2})
+    assert updated["project"] == "Design"
+    assert updated["priority"] == 2
+
+
+def test_invalid_priority_rejected(tmp_path: Path) -> None:
+    store = BoardStore(tmp_path / "board.json")
+    card = store.create_card("Task", "", "backlog")
+    with pytest.raises(ValueError):
+        store.update_card(card["id"], {"priority": 5})
+    with pytest.raises(ValueError):
+        store.update_card(card["id"], {"priority": "1"})
+
+
+def test_create_card_rejects_invalid_priority(tmp_path: Path) -> None:
+    store = BoardStore(tmp_path / "board.json")
+    with pytest.raises(ValueError):
+        store.create_card("Task", "", "backlog", priority=0)
+    with pytest.raises(ValueError):
+        store.create_card("Task", "", "backlog", priority=99)
+    with pytest.raises(ValueError):
+        store.create_card("Task", "", "backlog", priority="1")  # type: ignore[arg-type]
+
+
+def test_settings_default(tmp_path: Path) -> None:
+    store = BoardStore(tmp_path / "board.json")
+    board = store.load()
+    assert board["settings"]["background"]["type"] == "none"
+
+
+def test_update_settings(tmp_path: Path) -> None:
+    store = BoardStore(tmp_path / "board.json")
+    settings = store.update_settings({"background": {"type": "url", "value": "https://example.com/bg.jpg", "fit": "cover"}})
+    assert settings["background"]["type"] == "url"
+    board = store.load()
+    assert board["settings"]["background"]["value"] == "https://example.com/bg.jpg"
+
+
+def test_update_settings_rejects_unsafe_background_urls(tmp_path: Path) -> None:
+    store = BoardStore(tmp_path / "board.json")
+    store.update_settings({"background": {"type": "upload", "value": "/uploads/abcdef123456.png", "fit": "cover"}})
+
+    with pytest.raises(ValueError):
+        store.update_settings({"background": {"type": "url", "value": "javascript:alert(1)", "fit": "cover"}})
+    with pytest.raises(ValueError):
+        store.update_settings({"background": {"type": "url", "value": "/uploads/abcdef123456.png", "fit": "cover"}})
+    with pytest.raises(ValueError):
+        store.update_settings({"background": {"type": "upload", "value": "/uploads/not-hex.png", "fit": "cover"}})

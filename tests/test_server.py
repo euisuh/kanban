@@ -97,6 +97,168 @@ def test_basic_auth_gate(tmp_path: Path) -> None:
         thread.join(timeout=2)
 
 
+def test_patch_board_settings(tmp_path: Path) -> None:
+    prev_cred = os.environ.pop("KANBAN_CREDENTIAL", None)
+    HandlerForTest.store = BoardStore(tmp_path / "board.json")
+    server = ThreadingHTTPServer(("127.0.0.1", 0), HandlerForTest)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    port = server.server_address[1]
+    try:
+        status, body = request(
+            port, "PATCH", "/api/board/settings",
+            {"background": {"type": "url", "value": "https://example.com/bg.jpg", "fit": "cover"}},
+        )
+        assert status == 200
+        assert body["background"]["type"] == "url"
+        assert body["background"]["value"] == "https://example.com/bg.jpg"
+    finally:
+        if prev_cred is not None:
+            os.environ["KANBAN_CREDENTIAL"] = prev_cred
+        server.shutdown()
+        thread.join(timeout=2)
+
+
+def test_card_api_accepts_project_and_priority(tmp_path: Path) -> None:
+    prev_cred = os.environ.pop("KANBAN_CREDENTIAL", None)
+    HandlerForTest.store = BoardStore(tmp_path / "board.json")
+    server = ThreadingHTTPServer(("127.0.0.1", 0), HandlerForTest)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    port = server.server_address[1]
+    try:
+        status, card = request(
+            port, "POST", "/api/cards",
+            {"title": "Ship", "notes": "", "column": "backlog", "project": "Infra", "priority": 2},
+        )
+        assert status == 201
+        assert card["project"] == "Infra"
+        assert card["priority"] == 2
+    finally:
+        if prev_cred is not None:
+            os.environ["KANBAN_CREDENTIAL"] = prev_cred
+        server.shutdown()
+        thread.join(timeout=2)
+
+
+def test_card_api_rejects_string_priority(tmp_path: Path) -> None:
+    prev_cred = os.environ.pop("KANBAN_CREDENTIAL", None)
+    HandlerForTest.store = BoardStore(tmp_path / "board.json")
+    server = ThreadingHTTPServer(("127.0.0.1", 0), HandlerForTest)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    port = server.server_address[1]
+    try:
+        status, body = request(
+            port, "POST", "/api/cards",
+            {"title": "Ship", "notes": "", "column": "backlog", "priority": "2"},
+        )
+        assert status == 400
+        assert body["error"] == "Priority must be 1–4"
+    finally:
+        if prev_cred is not None:
+            os.environ["KANBAN_CREDENTIAL"] = prev_cred
+        server.shutdown()
+        thread.join(timeout=2)
+
+
+def test_patch_board_settings_rejects_unsafe_url(tmp_path: Path) -> None:
+    prev_cred = os.environ.pop("KANBAN_CREDENTIAL", None)
+    HandlerForTest.store = BoardStore(tmp_path / "board.json")
+    server = ThreadingHTTPServer(("127.0.0.1", 0), HandlerForTest)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    port = server.server_address[1]
+    try:
+        status, body = request(
+            port, "PATCH", "/api/board/settings",
+            {"background": {"type": "url", "value": "javascript:alert(1)", "fit": "cover"}},
+        )
+        assert status == 400
+        assert body["error"] == "background.value must be http(s) or /uploads/<hex>.<ext>"
+    finally:
+        if prev_cred is not None:
+            os.environ["KANBAN_CREDENTIAL"] = prev_cred
+        server.shutdown()
+        thread.join(timeout=2)
+
+
+def test_upload_valid_image(tmp_path: Path) -> None:
+    prev_cred = os.environ.pop("KANBAN_CREDENTIAL", None)
+    HandlerForTest.store = BoardStore(tmp_path / "board.json")
+    server = ThreadingHTTPServer(("127.0.0.1", 0), HandlerForTest)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    port = server.server_address[1]
+    try:
+        # Minimal valid 1x1 PNG
+        png_bytes = (
+            b"\x89PNG\r\n\x1a\n"
+            b"\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+            b"\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx"
+            b"\x9cc\xf8\x0f\x00\x00\x01\x01\x00\x05\x18\xd8N"
+            b"\x00\x00\x00\x00IEND\xaeB`\x82"
+        )
+        boundary = b"testboundary"
+        body = (
+            b"--testboundary\r\n"
+            b"Content-Disposition: form-data; name=\"file\"; filename=\"test.png\"\r\n"
+            b"Content-Type: image/png\r\n"
+            b"\r\n" + png_bytes + b"\r\n"
+            b"--testboundary--\r\n"
+        )
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+        conn.request(
+            "POST", "/api/upload", body=body,
+            headers={"Content-Type": "multipart/form-data; boundary=testboundary",
+                     "Content-Length": str(len(body))},
+        )
+        res = conn.getresponse()
+        data = json.loads(res.read().decode())
+        conn.close()
+        assert res.status == 201
+        assert data["path"].startswith("/uploads/")
+        assert data["path"].endswith(".png")
+    finally:
+        if prev_cred is not None:
+            os.environ["KANBAN_CREDENTIAL"] = prev_cred
+        server.shutdown()
+        thread.join(timeout=2)
+
+
+def test_upload_rejects_non_image(tmp_path: Path) -> None:
+    prev_cred = os.environ.pop("KANBAN_CREDENTIAL", None)
+    HandlerForTest.store = BoardStore(tmp_path / "board.json")
+    server = ThreadingHTTPServer(("127.0.0.1", 0), HandlerForTest)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    port = server.server_address[1]
+    try:
+        boundary = b"testboundary"
+        body = (
+            b"--testboundary\r\n"
+            b"Content-Disposition: form-data; name=\"file\"; filename=\"evil.html\"\r\n"
+            b"Content-Type: text/html\r\n"
+            b"\r\n<script>alert(1)</script>\r\n"
+            b"--testboundary--\r\n"
+        )
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+        conn.request(
+            "POST", "/api/upload", body=body,
+            headers={"Content-Type": "multipart/form-data; boundary=testboundary",
+                     "Content-Length": str(len(body))},
+        )
+        res = conn.getresponse()
+        res.read()
+        conn.close()
+        assert res.status == 400
+    finally:
+        if prev_cred is not None:
+            os.environ["KANBAN_CREDENTIAL"] = prev_cred
+        server.shutdown()
+        thread.join(timeout=2)
+
+
 def test_head_requires_basic_auth(tmp_path: Path) -> None:
     os.environ["KANBAN_CREDENTIAL"] = "kanban:secret"
     HandlerForTest.store = BoardStore(tmp_path / "board.json")

@@ -13,16 +13,115 @@
           <p class="eyebrow">Self-hosted</p>
           <h1>Kanban</h1>
         </div>
-        <form id="card-form" class="composer">
-          <input id="title" name="title" type="text" placeholder="New card" autocomplete="off" required />
-          <input id="notes" name="notes" type="text" placeholder="Notes" autocomplete="off" />
-          <button type="submit" aria-label="Add card">+</button>
-        </form>
+        <div class="composer-wrap">
+          <form id="card-form" class="composer">
+            <input
+              id="quick-add"
+              type="text"
+              placeholder="New card — e.g. Fix bug @Auth p2 | check token expiry"
+              autocomplete="off"
+              required
+            />
+          </form>
+          <div class="composer-preview" id="composer-preview" aria-live="polite"></div>
+        </div>
+        <button class="settings-btn" id="settings-toggle" type="button" aria-label="Board settings">⚙</button>
       </header>
+
+      <div class="settings-panel" id="settings-panel">
+        <div class="settings-tabs">
+          <button class="settings-tab active" data-tab="upload" type="button">Upload</button>
+          <button class="settings-tab" data-tab="url" type="button">URL</button>
+          <button class="settings-tab" data-tab="none" type="button">None</button>
+        </div>
+
+        <div class="settings-pane active" id="pane-upload">
+          <label>
+            Image file
+            <input type="file" id="bg-file" accept="image/jpeg,image/png,image/webp,image/gif" />
+          </label>
+          <fieldset style="border:0;padding:0;margin:0">
+            <legend style="font-size:0.82rem;color:var(--muted);margin-bottom:4px">Fit</legend>
+            <div class="settings-fit-group" id="fit-group-upload">
+              <button class="fit-btn active" data-fit="cover" type="button">Cover</button>
+              <button class="fit-btn" data-fit="contain" type="button">Contain</button>
+              <button class="fit-btn" data-fit="center" type="button">Center</button>
+            </div>
+          </fieldset>
+          <img class="settings-preview" id="preview-upload" alt="Preview" hidden />
+          <button class="settings-apply" id="apply-upload">Apply</button>
+        </div>
+
+        <div class="settings-pane" id="pane-url">
+          <label>
+            Image URL
+            <input type="url" id="bg-url" placeholder="https://example.com/image.jpg" />
+          </label>
+          <fieldset style="border:0;padding:0;margin:0">
+            <legend style="font-size:0.82rem;color:var(--muted);margin-bottom:4px">Fit</legend>
+            <div class="settings-fit-group" id="fit-group-url">
+              <button class="fit-btn active" data-fit="cover" type="button">Cover</button>
+              <button class="fit-btn" data-fit="contain" type="button">Contain</button>
+              <button class="fit-btn" data-fit="center" type="button">Center</button>
+            </div>
+          </fieldset>
+          <img class="settings-preview" id="preview-url" alt="Preview" hidden />
+          <button class="settings-apply" id="apply-url">Apply</button>
+        </div>
+
+        <div class="settings-pane" id="pane-none">
+          <p style="color:var(--muted);font-size:0.85rem;margin:0">Remove background image and revert to default gradient.</p>
+          <button class="settings-apply" id="apply-none">Apply</button>
+        </div>
+      </div>
 
       <section id="board" class="board" aria-label="Kanban board"></section>
     </main>
 
+    <!-- Card expand modal -->
+    <div class="modal-backdrop" id="modal-backdrop" role="dialog" aria-modal="true" aria-label="Edit card">
+      <div class="modal" id="modal">
+        <div class="modal-header">
+          <span class="priority-badge" id="modal-priority-badge"></span>
+          <span class="project-chip" id="modal-project-chip"></span>
+          <button class="modal-close" id="modal-close" type="button" aria-label="Close">✕</button>
+        </div>
+
+        <div class="modal-section">
+          <div class="modal-label">Title</div>
+          <input type="text" id="modal-title" />
+        </div>
+
+        <div class="modal-row modal-section">
+          <div>
+            <div class="modal-label">Project</div>
+            <input type="text" id="modal-project" placeholder="e.g. Auth" />
+          </div>
+          <div>
+            <div class="modal-label">Priority</div>
+            <div class="priority-group">
+              <button class="priority-btn p1" data-p="1" type="button">p1</button>
+              <button class="priority-btn p2" data-p="2" type="button">p2</button>
+              <button class="priority-btn p3" data-p="3" type="button">p3</button>
+              <button class="priority-btn p4 active" data-p="4" type="button">p4</button>
+            </div>
+          </div>
+          <div>
+            <div class="modal-label">Column</div>
+            <select id="modal-column"></select>
+          </div>
+        </div>
+
+        <div class="modal-section">
+          <div class="modal-label">Notes</div>
+          <textarea id="modal-notes"></textarea>
+        </div>
+
+        <div class="modal-date" id="modal-date"></div>
+      </div>
+    </div>
+
+    <!-- Templates -->
     <template id="column-template">
       <article class="column">
         <header class="column-head">
@@ -36,11 +135,16 @@
 
     <template id="card-template">
       <article class="card" draggable="true">
-        <div class="card-main">
-          <input class="card-title" />
-          <textarea class="card-notes" rows="2"></textarea>
+        <div class="card-meta">
+          <span class="priority-badge"></span>
+          <span class="project-chip"></span>
         </div>
-        <button class="delete" type="button" aria-label="Delete card">x</button>
+        <p class="card-title"></p>
+        <p class="card-notes"></p>
+        <div class="card-footer">
+          <span class="card-date"></span>
+          <button class="delete" type="button" aria-label="Delete card">✕</button>
+        </div>
       </article>
     </template>
 

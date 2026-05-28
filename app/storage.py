@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 import time
 import uuid
@@ -18,22 +19,48 @@ DEFAULT_COLUMNS = [
     {"id": "done", "title": "Done", "accent": "#5762b7"},
 ]
 
+UPLOAD_BACKGROUND_RE = re.compile(r"^/uploads/[0-9a-fA-F]+\.(?:jpg|jpeg|png|webp|gif)$")
+
 
 def default_board() -> dict[str, Any]:
     now = int(time.time())
     return {
+        "settings": {"background": {"type": "none", "value": "", "fit": "cover"}},
         "columns": DEFAULT_COLUMNS,
         "cards": [
             {
                 "id": "welcome",
                 "title": "Make the board yours",
                 "notes": "Add cards, drag them between columns, and keep the JSON file backed up.",
+                "project": "",
+                "priority": 4,
                 "column": "backlog",
                 "createdAt": now,
                 "updatedAt": now,
             }
         ],
     }
+
+
+def _priority(value: Any) -> int:
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise ValueError("Priority must be 1–4")
+    if value not in (1, 2, 3, 4):
+        raise ValueError("Priority must be 1–4")
+    return value
+
+
+def _valid_background_value(bg_type: str, value: str) -> bool:
+    if bg_type == "none":
+        return value == ""
+    if bg_type == "upload":
+        return UPLOAD_BACKGROUND_RE.fullmatch(value) is not None
+    if bg_type == "url":
+        from urllib.parse import urlparse
+
+        parsed = urlparse(value)
+        return parsed.scheme in ("http", "https") and bool(parsed.netloc)
+    return False
 
 
 @dataclass
@@ -74,11 +101,12 @@ class BoardStore:
                     os.unlink(tmp_name)
             return board
 
-    def create_card(self, title: str, notes: str, column: str) -> dict[str, Any]:
+    def create_card(self, title: str, notes: str, column: str, project: str = "", priority: int = 4) -> dict[str, Any]:
         title = title.strip()
         notes = notes.strip()
         if not title:
             raise ValueError("Card title is required")
+        priority = _priority(priority)
 
         board = self.load()
         self._require_column(board, column)
@@ -87,6 +115,8 @@ class BoardStore:
             "id": uuid.uuid4().hex,
             "title": title,
             "notes": notes,
+            "project": project.strip(),
+            "priority": priority,
             "column": column,
             "createdAt": now,
             "updatedAt": now,
@@ -106,6 +136,10 @@ class BoardStore:
             card["title"] = title
         if "notes" in patch:
             card["notes"] = str(patch["notes"]).strip()
+        if "project" in patch:
+            card["project"] = str(patch["project"]).strip()
+        if "priority" in patch:
+            card["priority"] = _priority(patch["priority"])
         if "column" in patch:
             column = str(patch["column"])
             self._require_column(board, column)
@@ -113,6 +147,31 @@ class BoardStore:
         card["updatedAt"] = int(time.time())
         self.save(board)
         return card
+
+    def update_settings(self, patch: dict[str, Any]) -> dict[str, Any]:
+        board = self.load()
+        settings = board.get("settings") or {}
+        if "background" in patch:
+            bg = patch["background"]
+            if not isinstance(bg, dict):
+                raise ValueError("background must be an object")
+            bg_type = str(bg.get("type", "none"))
+            if bg_type not in ("none", "url", "upload"):
+                raise ValueError("background.type must be none, url, or upload")
+            fit = str(bg.get("fit", "cover"))
+            if fit not in ("cover", "contain", "center"):
+                raise ValueError("background.fit must be cover, contain, or center")
+            value = str(bg.get("value", "")).strip()
+            if not _valid_background_value(bg_type, value):
+                raise ValueError("background.value must be http(s) or /uploads/<hex>.<ext>")
+            settings["background"] = {
+                "type": bg_type,
+                "value": value,
+                "fit": fit,
+            }
+        board["settings"] = settings
+        board = self.save(board)
+        return board["settings"]
 
     def delete_card(self, card_id: str) -> None:
         board = self.load()
@@ -132,6 +191,8 @@ class BoardStore:
                 "id": str(raw.get("id") or uuid.uuid4().hex),
                 "title": str(raw.get("title") or "Untitled").strip() or "Untitled",
                 "notes": str(raw.get("notes") or "").strip(),
+                "project": str(raw.get("project") or "").strip(),
+                "priority": int(raw["priority"]) if raw.get("priority") in (1, 2, 3, 4) else 4,
                 "column": str(raw.get("column") or columns[0]["id"]),
                 "createdAt": int(raw.get("createdAt") or now),
                 "updatedAt": int(raw.get("updatedAt") or now),
@@ -139,7 +200,11 @@ class BoardStore:
             if card["column"] not in column_ids:
                 card["column"] = columns[0]["id"]
             cards.append(card)
-        return {"columns": columns, "cards": cards}
+        bg_raw = (board.get("settings") or {}).get("background") or {}
+        bg_type = bg_raw.get("type", "none") if bg_raw.get("type") in ("none", "url", "upload") else "none"
+        fit = bg_raw.get("fit", "cover") if bg_raw.get("fit") in ("cover", "contain", "center") else "cover"
+        settings = {"background": {"type": bg_type, "value": str(bg_raw.get("value") or ""), "fit": fit}}
+        return {"settings": settings, "columns": columns, "cards": cards}
 
     def _find_card(self, board: dict[str, Any], card_id: str) -> dict[str, Any]:
         for card in board["cards"]:

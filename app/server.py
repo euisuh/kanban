@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import base64
+from email import policy
+from email.parser import BytesParser
 import json
 import mimetypes
 import os
 import secrets
+import uuid
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -15,10 +18,56 @@ from .storage import BoardStore
 
 ROOT = Path(__file__).resolve().parent
 STATIC = ROOT / "static"
+UPLOADS = ROOT / "static" / "uploads"
+ALLOWED_UPLOAD_MIME = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
+
+_MIME_TO_EXT = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+}
+
+
+def _is_valid_image_bytes(data: bytes) -> bool:
+    if data[:3] == b"\xff\xd8\xff":
+        return True  # JPEG
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return True  # PNG
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return True  # GIF
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return True  # WEBP
+    return False
 
 
 def store_from_env() -> BoardStore:
     return BoardStore(Path(os.environ.get("KANBAN_DATA", "data/board.json")))
+
+
+def _parse_multipart(data: bytes, boundary: bytes) -> tuple[bytes, str, str]:
+    message = BytesParser(policy=policy.default).parsebytes(
+        b"Content-Type: multipart/form-data; boundary="
+        + boundary
+        + b"\r\nMIME-Version: 1.0\r\n\r\n"
+        + data
+    )
+    if not message.is_multipart():
+        return b"", "application/octet-stream", ".bin"
+
+    first_readable_part = None
+    for part in message.iter_parts():
+        payload = part.get_payload(decode=True)
+        if payload is None:
+            continue
+        mime = part.get_content_type().lower()
+        parsed = (payload, mime, _MIME_TO_EXT.get(mime, ".bin"))
+        if part.get_filename() or part.get_param("name", header="content-disposition") == "file":
+            return parsed
+        if first_readable_part is None:
+            first_readable_part = parsed
+    return first_readable_part or (b"", "application/octet-stream", ".bin")
 
 
 class KanbanHandler(BaseHTTPRequestHandler):
@@ -50,12 +99,51 @@ class KanbanHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         if parsed.path == "/api/cards":
             payload = self._payload()
+            priority = payload.get("priority", 4)
+            if not isinstance(priority, int) or isinstance(priority, bool):
+                raise ValueError("Priority must be 1–4")
             card = self.store.create_card(
                 str(payload.get("title", "")),
                 str(payload.get("notes", "")),
                 str(payload.get("column", "backlog")),
+                project=str(payload.get("project", "")),
+                priority=priority,
             )
             self._json(HTTPStatus.CREATED, card)
+            return
+
+        if parsed.path == "/api/upload":
+            content_type = self.headers.get("content-type", "")
+            if not content_type.startswith("multipart/form-data"):
+                self._json(HTTPStatus.BAD_REQUEST, {"error": "multipart/form-data required"})
+                return
+            length = int(self.headers.get("content-length", "0") or "0")
+            if length > MAX_UPLOAD_BYTES:
+                self._json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"error": "File too large (max 10 MB)"})
+                return
+            raw = self.rfile.read(length)
+            boundary = None
+            for part in content_type.split(";"):
+                part = part.strip()
+                if part.startswith("boundary="):
+                    boundary = part[9:].strip('"')
+            if not boundary:
+                self._json(HTTPStatus.BAD_REQUEST, {"error": "Missing boundary"})
+                return
+            file_data, mime, ext = _parse_multipart(raw, boundary.encode())
+            if not file_data:
+                self._json(HTTPStatus.BAD_REQUEST, {"error": "Empty or unreadable file"})
+                return
+            if mime not in ALLOWED_UPLOAD_MIME:
+                self._json(HTTPStatus.BAD_REQUEST, {"error": "Unsupported image type"})
+                return
+            if not _is_valid_image_bytes(file_data):
+                self._json(HTTPStatus.BAD_REQUEST, {"error": "Invalid image file"})
+                return
+            UPLOADS.mkdir(parents=True, exist_ok=True)
+            filename = uuid.uuid4().hex + ext
+            (UPLOADS / filename).write_bytes(file_data)
+            self._json(HTTPStatus.CREATED, {"path": f"/uploads/{filename}"})
             return
 
         self._json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
@@ -69,6 +157,11 @@ class KanbanHandler(BaseHTTPRequestHandler):
             card_id = unquote(parsed.path[len(prefix) :])
             card = self.store.update_card(card_id, self._payload())
             self._json(HTTPStatus.OK, card)
+            return
+
+        if parsed.path == "/api/board/settings":
+            settings = self.store.update_settings(self._payload())
+            self._json(HTTPStatus.OK, settings)
             return
 
         self._json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
@@ -155,7 +248,7 @@ class KanbanHandler(BaseHTTPRequestHandler):
     def handle_one_request(self) -> None:
         try:
             super().handle_one_request()
-        except (ValueError, KeyError) as exc:
+        except (ValueError, KeyError, TypeError) as exc:
             self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc).strip("'")})
 
 
