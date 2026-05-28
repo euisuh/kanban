@@ -83,6 +83,20 @@ function esc(str) {
     .replace(/"/g, "&quot;");
 }
 
+function projectColor(project) {
+  const palette = [
+    ["#e9f5ef", "#1f6d59"],
+    ["#eef1fb", "#4e5fa8"],
+    ["#fff1df", "#9b5a18"],
+    ["#f7eaf1", "#9a3f67"],
+    ["#e8f3f7", "#2d6778"],
+    ["#f1edfb", "#6952a5"],
+  ];
+  let hash = 0;
+  for (const ch of String(project)) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+  return palette[hash % palette.length];
+}
+
 function cssUrlValue(str) {
   return String(str)
     .replace(/[\0-\x1F\x7F]/g, "")
@@ -135,9 +149,14 @@ function renderCard(card) {
 
   if (card.project) {
     chip.textContent = card.project;
+    const [bg, fg] = projectColor(card.project);
+    chip.style.background = bg;
+    chip.style.color = fg;
     chip.style.display = "";
   } else {
     chip.style.display = "none";
+    chip.style.removeProperty("background");
+    chip.style.removeProperty("color");
   }
 
   titleEl.textContent = card.title;

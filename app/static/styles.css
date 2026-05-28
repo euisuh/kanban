@@ -289,6 +289,10 @@ h1 {
 
 .column {
   min-width: 0;
+  display: flex;
+  max-height: calc(100vh - 190px);
+  min-height: 360px;
+  flex-direction: column;
   background: rgba(255, 253, 248, 0.45);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
@@ -302,6 +306,7 @@ h1 {
   grid-template-columns: 10px minmax(0, 1fr) auto;
   gap: 10px;
   align-items: center;
+  flex: 0 0 auto;
   padding: 14px;
   border-bottom: 1px solid rgba(222, 216, 204, 0.5);
 }
@@ -326,10 +331,24 @@ h1 {
 .dropzone {
   display: grid;
   gap: 10px;
-  min-height: 62vh;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 12px;
   align-content: start;
+  scrollbar-color: rgba(104, 113, 119, 0.42) transparent;
+  scrollbar-width: thin;
 }
+
+.dropzone::-webkit-scrollbar { width: 9px; }
+.dropzone::-webkit-scrollbar-thumb {
+  background: rgba(104, 113, 119, 0.34);
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+.dropzone::-webkit-scrollbar-thumb:hover { background-color: rgba(104, 113, 119, 0.5); }
 
 .dropzone.dragover { background: rgba(47, 125, 109, 0.09); }
 
@@ -375,12 +394,14 @@ h1 {
 .priority-4 { background: #e0e6f0; color: #5a6478; }
 
 .project-chip {
+  min-width: 0;
   font-size: 0.72rem;
+  font-weight: 720;
   color: var(--muted);
   background: rgba(104, 113, 119, 0.1);
   padding: 2px 8px;
-  border-radius: 999px;
-  max-width: 120px;
+  border-radius: 6px;
+  max-width: 132px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -411,15 +432,14 @@ h1 {
 }
 
 .card-footer {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
   margin-top: 6px;
 }
 
 .delete {
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
+  margin-left: auto;
+  flex: 0 0 auto;
   display: grid;
   place-items: center;
   border: 0;
@@ -635,6 +655,6 @@ h1 {
   .settings-preview { width: 100%; height: 120px; }
   .settings-apply { width: 100%; }
   .board { grid-template-columns: 1fr; }
-  .dropzone { min-height: 220px; }
+  .column { max-height: 520px; min-height: 280px; }
   .modal-row { grid-template-columns: 1fr; }
 }
