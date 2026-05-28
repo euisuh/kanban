@@ -360,13 +360,17 @@ document.querySelector("#apply-upload").addEventListener("click", async () => {
   }
   const { path } = uploadResult;
   const fit = activeFit("fit-group-upload");
-  const settings = await api("/api/board/settings", {
-    method: "PATCH",
-    body: JSON.stringify({ background: { type: "upload", value: path, fit } }),
-  });
-  board.settings = { background: settings.background };
-  applyBg(board.settings);
-  document.querySelector("#settings-panel").classList.remove("open");
+  try {
+    const settings = await api("/api/board/settings", {
+      method: "PATCH",
+      body: JSON.stringify({ background: { type: "upload", value: path, fit } }),
+    });
+    board.settings = { background: settings.background };
+    applyBg(board.settings);
+    document.querySelector("#settings-panel").classList.remove("open");
+  } catch (err) {
+    alert("Failed to apply background: " + err.message);
+  }
 });
 
 // Apply URL
