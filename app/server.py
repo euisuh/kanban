@@ -42,8 +42,23 @@ def _is_valid_image_bytes(data: bytes) -> bool:
     return False
 
 
-def store_from_env() -> BoardStore:
-    return BoardStore(Path(os.environ.get("KANBAN_DATA", "data/board.json")))
+def _parse_credentials() -> dict[str, str]:
+    """Returns {username: password} from KANBAN_CREDENTIALS or KANBAN_CREDENTIAL."""
+    raw = os.environ.get("KANBAN_CREDENTIALS", "")
+    if raw:
+        result: dict[str, str] = {}
+        for entry in raw.split(","):
+            entry = entry.strip()
+            if ":" in entry:
+                username, password = entry.split(":", 1)
+                result[username.strip()] = password.strip()
+        return result
+    # backward compat: single credential
+    single = os.environ.get("KANBAN_CREDENTIAL", "")
+    if single and ":" in single:
+        username, password = single.split(":", 1)
+        return {username: password}
+    return {}
 
 
 def _parse_multipart(data: bytes, boundary: bytes) -> tuple[bytes, str, str]:
@@ -71,38 +86,55 @@ def _parse_multipart(data: bytes, boundary: bytes) -> tuple[bytes, str, str]:
 
 
 class KanbanHandler(BaseHTTPRequestHandler):
-    store = store_from_env()
+    # Override in tests to control where board files land.
+    data_root: Path | None = None
+
+    def _get_store(self, username: str) -> BoardStore:
+        if username:
+            root = self.__class__.data_root or Path(
+                os.environ.get("KANBAN_DATA_ROOT", "data")
+            )
+            return BoardStore(root / username / "board.json")
+        # no-auth fallback — honour legacy KANBAN_DATA
+        if self.__class__.data_root is not None:
+            return BoardStore(self.__class__.data_root / "board.json")
+        return BoardStore(Path(os.environ.get("KANBAN_DATA", "data/board.json")))
 
     def do_HEAD(self) -> None:
-        if not self._authorized():
+        username = self._authorized()
+        if username is None:
             return
+        store = self._get_store(username)
         parsed = urlparse(self.path)
         if parsed.path == "/api/board":
-            self._json(HTTPStatus.OK, self.store.load(), send_body=False)
+            self._json(HTTPStatus.OK, store.load(), send_body=False)
             return
-
         self._static(parsed.path, send_body=False)
 
     def do_GET(self) -> None:
-        if not self._authorized():
+        username = self._authorized()
+        if username is None:
             return
+        store = self._get_store(username)
         parsed = urlparse(self.path)
         if parsed.path == "/api/board":
-            self._json(HTTPStatus.OK, self.store.load())
+            self._json(HTTPStatus.OK, store.load())
             return
-
         self._static(parsed.path)
 
     def do_POST(self) -> None:
-        if not self._authorized():
+        username = self._authorized()
+        if username is None:
             return
+        store = self._get_store(username)
         parsed = urlparse(self.path)
+
         if parsed.path == "/api/cards":
             payload = self._payload()
             priority = payload.get("priority", 4)
             if not isinstance(priority, int) or isinstance(priority, bool):
                 raise ValueError("Priority must be 1–4")
-            card = self.store.create_card(
+            card = store.create_card(
                 str(payload.get("title", "")),
                 str(payload.get("notes", "")),
                 str(payload.get("column", "backlog")),
@@ -149,30 +181,34 @@ class KanbanHandler(BaseHTTPRequestHandler):
         self._json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
 
     def do_PATCH(self) -> None:
-        if not self._authorized():
+        username = self._authorized()
+        if username is None:
             return
+        store = self._get_store(username)
         parsed = urlparse(self.path)
         prefix = "/api/cards/"
         if parsed.path.startswith(prefix):
-            card_id = unquote(parsed.path[len(prefix) :])
-            card = self.store.update_card(card_id, self._payload())
+            card_id = unquote(parsed.path[len(prefix):])
+            card = store.update_card(card_id, self._payload())
             self._json(HTTPStatus.OK, card)
             return
 
         if parsed.path == "/api/board/settings":
-            settings = self.store.update_settings(self._payload())
+            settings = store.update_settings(self._payload())
             self._json(HTTPStatus.OK, settings)
             return
 
         self._json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
 
     def do_DELETE(self) -> None:
-        if not self._authorized():
+        username = self._authorized()
+        if username is None:
             return
+        store = self._get_store(username)
         parsed = urlparse(self.path)
         prefix = "/api/cards/"
         if parsed.path.startswith(prefix):
-            self.store.delete_card(unquote(parsed.path[len(prefix) :]))
+            store.delete_card(unquote(parsed.path[len(prefix):]))
             self._json(HTTPStatus.NO_CONTENT, None)
             return
 
@@ -181,15 +217,19 @@ class KanbanHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args: object) -> None:
         print("%s - %s" % (self.address_string(), fmt % args))
 
-    def _authorized(self) -> bool:
-        credential = os.environ.get("KANBAN_CREDENTIAL", "")
-        if not credential:
-            return True
+    def _authorized(self) -> str | None:
+        """Returns username (or '' for no-auth mode) on success; sends 401 and returns None on failure."""
+        credentials = _parse_credentials()
+        if not credentials:
+            return ""
 
-        expected = "Basic " + base64.b64encode(credential.encode("utf-8")).decode("ascii")
         actual = self.headers.get("authorization", "")
-        if secrets.compare_digest(actual, expected):
-            return True
+        for username, password in credentials.items():
+            expected = "Basic " + base64.b64encode(
+                f"{username}:{password}".encode("utf-8")
+            ).decode("ascii")
+            if secrets.compare_digest(actual, expected):
+                return username
 
         body = b"Authentication required\n"
         self.send_response(HTTPStatus.UNAUTHORIZED)
@@ -198,7 +238,7 @@ class KanbanHandler(BaseHTTPRequestHandler):
         self.send_header("content-length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
-        return False
+        return None
 
     def _payload(self) -> dict[str, object]:
         length = int(self.headers.get("content-length", "0") or "0")
