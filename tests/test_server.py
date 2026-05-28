@@ -110,6 +110,38 @@ def test_basic_auth_gate(tmp_path: Path) -> None:
         _stop(server, thread)
 
 
+def test_single_credential_uses_legacy_data_file(tmp_path: Path) -> None:
+    os.environ["KANBAN_CREDENTIAL"] = "kanban:secret"
+    legacy_board = {
+        "settings": {"background": {"type": "none", "value": "", "fit": "cover"}},
+        "columns": [{"id": "backlog", "title": "Backlog", "accent": "#7c8a99"}],
+        "cards": [
+            {
+                "id": "existing",
+                "title": "Existing deploy board",
+                "notes": "",
+                "project": "",
+                "priority": 4,
+                "column": "backlog",
+                "sortIndex": 0,
+                "createdAt": 1,
+                "updatedAt": 1,
+            }
+        ],
+    }
+    (tmp_path / "board.json").write_text(json.dumps(legacy_board), encoding="utf-8")
+    server, thread, port = _start(tmp_path)
+    auth = "Basic " + base64.b64encode(b"kanban:secret").decode()
+    try:
+        status, board = request(port, "GET", "/api/board", auth=auth)
+        assert status == 200
+        assert board["cards"][0]["title"] == "Existing deploy board"
+        assert not (tmp_path / "kanban" / "board.json").exists()
+    finally:
+        os.environ.pop("KANBAN_CREDENTIAL", None)
+        _stop(server, thread)
+
+
 def test_per_user_boards_isolated(tmp_path: Path) -> None:
     os.environ["KANBAN_CREDENTIALS"] = "alice:pass1,bob:pass2"
     server, thread, port = _start(tmp_path)

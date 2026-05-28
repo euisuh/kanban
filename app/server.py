@@ -120,7 +120,7 @@ class KanbanHandler(BaseHTTPRequestHandler):
     data_root: Path | None = None
 
     def _get_store(self, username: str) -> BoardStore:
-        if username:
+        if username and os.environ.get("KANBAN_CREDENTIALS", ""):
             root = (self.__class__.data_root or Path(
                 os.environ.get("KANBAN_DATA_ROOT", "data")
             )).resolve()
