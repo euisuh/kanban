@@ -83,6 +83,9 @@ class BoardStore:
         if not title:
             raise ValueError("Card title is required")
 
+        if priority not in (1, 2, 3, 4):
+            raise ValueError("Priority must be 1–4")
+
         board = self.load()
         self._require_column(board, column)
         now = int(time.time())
@@ -131,6 +134,8 @@ class BoardStore:
         settings = board.get("settings") or {}
         if "background" in patch:
             bg = patch["background"]
+            if not isinstance(bg, dict):
+                raise ValueError("background must be an object")
             bg_type = str(bg.get("type", "none"))
             if bg_type not in ("none", "url", "upload"):
                 raise ValueError("background.type must be none, url, or upload")
@@ -143,8 +148,8 @@ class BoardStore:
                 "fit": fit,
             }
         board["settings"] = settings
-        self.save(board)
-        return settings
+        board = self.save(board)
+        return board["settings"]
 
     def delete_card(self, card_id: str) -> None:
         board = self.load()

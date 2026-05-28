@@ -68,6 +68,14 @@ def test_invalid_priority_rejected(tmp_path: Path) -> None:
         store.update_card(card["id"], {"priority": 5})
 
 
+def test_create_card_rejects_invalid_priority(tmp_path: Path) -> None:
+    store = BoardStore(tmp_path / "board.json")
+    with pytest.raises(ValueError):
+        store.create_card("Task", "", "backlog", priority=0)
+    with pytest.raises(ValueError):
+        store.create_card("Task", "", "backlog", priority=99)
+
+
 def test_settings_default(tmp_path: Path) -> None:
     store = BoardStore(tmp_path / "board.json")
     board = store.load()
