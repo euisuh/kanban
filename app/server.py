@@ -18,6 +18,26 @@ ROOT = Path(__file__).resolve().parent
 STATIC = ROOT / "static"
 UPLOADS = ROOT / "static" / "uploads"
 ALLOWED_UPLOAD_MIME = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
+
+_MIME_TO_EXT = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+}
+
+
+def _is_valid_image_bytes(data: bytes) -> bool:
+    if data[:3] == b"\xff\xd8\xff":
+        return True  # JPEG
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return True  # PNG
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return True  # GIF
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return True  # WEBP
+    return False
 
 
 def store_from_env() -> BoardStore:
@@ -40,13 +60,7 @@ def _parse_multipart(data: bytes, boundary: bytes) -> tuple[bytes, str, str]:
         for line in headers_text.splitlines():
             if line.lower().startswith("content-type:"):
                 mime = line.split(":", 1)[1].strip().lower()
-                ext_map = {
-                    "image/jpeg": ".jpg",
-                    "image/png": ".png",
-                    "image/webp": ".webp",
-                    "image/gif": ".gif",
-                }
-                ext = ext_map.get(mime, ".bin")
+                ext = _MIME_TO_EXT.get(mime, ".bin")
         return body, mime, ext
     return b"", "application/octet-stream", ".bin"
 
@@ -96,6 +110,9 @@ class KanbanHandler(BaseHTTPRequestHandler):
                 self._json(HTTPStatus.BAD_REQUEST, {"error": "multipart/form-data required"})
                 return
             length = int(self.headers.get("content-length", "0") or "0")
+            if length > MAX_UPLOAD_BYTES:
+                self._json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"error": "File too large (max 10 MB)"})
+                return
             raw = self.rfile.read(length)
             boundary = None
             for part in content_type.split(";"):
@@ -106,8 +123,14 @@ class KanbanHandler(BaseHTTPRequestHandler):
                 self._json(HTTPStatus.BAD_REQUEST, {"error": "Missing boundary"})
                 return
             file_data, mime, ext = _parse_multipart(raw, boundary.encode())
+            if not file_data:
+                self._json(HTTPStatus.BAD_REQUEST, {"error": "Empty or unreadable file"})
+                return
             if mime not in ALLOWED_UPLOAD_MIME:
                 self._json(HTTPStatus.BAD_REQUEST, {"error": "Unsupported image type"})
+                return
+            if not _is_valid_image_bytes(file_data):
+                self._json(HTTPStatus.BAD_REQUEST, {"error": "Invalid image file"})
                 return
             UPLOADS.mkdir(parents=True, exist_ok=True)
             filename = uuid.uuid4().hex + ext
