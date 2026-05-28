@@ -9,6 +9,7 @@
   --focus: #2f7d6d;
   --control-h: 40px;
   --control-sm: 36px;
+  --composer-h: calc(var(--control-h) + 18px);
   --radius: 6px;
 }
 
@@ -47,7 +48,7 @@ button, input, select, textarea { font: inherit; }
 
 .topbar {
   display: grid;
-  grid-template-columns: minmax(180px, 0.7fr) minmax(520px, 1.3fr) 44px;
+  grid-template-columns: minmax(180px, 0.7fr) minmax(520px, 1.3fr) var(--composer-h);
   gap: 20px;
   align-items: end;
   margin-bottom: 14px;
@@ -149,8 +150,8 @@ h1 {
 /* ── Settings button ────────────────────────────── */
 
 .settings-btn {
-  width: 44px;
-  height: 44px;
+  width: var(--composer-h);
+  height: var(--composer-h);
   align-self: end;
   display: grid;
   place-items: center;
@@ -433,6 +434,10 @@ h1 {
 }
 
 .priority-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
   font-size: 0.68rem;
   font-weight: 700;
   padding: 2px 7px;
@@ -447,6 +452,9 @@ h1 {
 
 .project-chip {
   min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
   font-size: 0.72rem;
   font-weight: 720;
   color: var(--muted);
@@ -594,13 +602,18 @@ h1 {
 .modal-header .priority-badge {
   min-width: var(--control-sm);
   height: var(--control-sm);
-  display: grid;
-  place-items: center;
   text-align: center;
   border-radius: var(--radius);
   padding: 0 8px;
 }
-.modal-header .project-chip { flex: 1; min-width: 0; }
+
+.modal-header .project-chip {
+  flex: 1;
+  min-width: 0;
+  height: var(--control-sm);
+  border-radius: var(--radius);
+  padding: 0 10px;
+}
 
 .modal-close {
   margin-left: auto;
@@ -732,7 +745,7 @@ h1 {
 /* ── Responsive ─────────────────────────────────── */
 
 @media (max-width: 980px) {
-  .topbar { grid-template-columns: 1fr 44px; }
+  .topbar { grid-template-columns: 1fr var(--composer-h); }
   .composer-wrap { grid-column: 1 / -1; }
   .composer { grid-template-columns: 1fr 120px 76px; }
   #card-notes-input { grid-column: 1 / 3; }
