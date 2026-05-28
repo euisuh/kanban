@@ -1,0 +1,11 @@
+.env
+.env.*
+!.env.example
+CLAUDE.md
+*.pem
+*.key
+__pycache__/
+.pytest_cache/
+.coverage
+data/
+*.pyc

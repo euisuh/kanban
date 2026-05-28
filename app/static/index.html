@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Kanban</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Self-hosted</p>
+          <h1>Kanban</h1>
+        </div>
+        <form id="card-form" class="composer">
+          <input id="title" name="title" type="text" placeholder="New card" autocomplete="off" required />
+          <input id="notes" name="notes" type="text" placeholder="Notes" autocomplete="off" />
+          <button type="submit" aria-label="Add card">+</button>
+        </form>
+      </header>
+
+      <section id="board" class="board" aria-label="Kanban board"></section>
+    </main>
+
+    <template id="column-template">
+      <article class="column">
+        <header class="column-head">
+          <span class="dot"></span>
+          <h2></h2>
+          <span class="count"></span>
+        </header>
+        <div class="dropzone"></div>
+      </article>
+    </template>
+
+    <template id="card-template">
+      <article class="card" draggable="true">
+        <div class="card-main">
+          <input class="card-title" />
+          <textarea class="card-notes" rows="2"></textarea>
+        </div>
+        <button class="delete" type="button" aria-label="Delete card">x</button>
+      </article>
+    </template>
+
+    <script src="/app.js" defer></script>
+  </body>
+</html>
