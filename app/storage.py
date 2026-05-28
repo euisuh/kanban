@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 import time
 import uuid
@@ -17,6 +18,8 @@ DEFAULT_COLUMNS = [
     {"id": "review", "title": "Review", "accent": "#b7791f"},
     {"id": "done", "title": "Done", "accent": "#5762b7"},
 ]
+
+UPLOAD_BACKGROUND_RE = re.compile(r"^/uploads/[0-9a-fA-F]+\.(?:jpg|jpeg|png|webp|gif)$")
 
 
 def default_board() -> dict[str, Any]:
@@ -37,6 +40,27 @@ def default_board() -> dict[str, Any]:
             }
         ],
     }
+
+
+def _priority(value: Any) -> int:
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise ValueError("Priority must be 1–4")
+    if value not in (1, 2, 3, 4):
+        raise ValueError("Priority must be 1–4")
+    return value
+
+
+def _valid_background_value(bg_type: str, value: str) -> bool:
+    if bg_type == "none":
+        return value == ""
+    if bg_type == "upload":
+        return UPLOAD_BACKGROUND_RE.fullmatch(value) is not None
+    if bg_type == "url":
+        from urllib.parse import urlparse
+
+        parsed = urlparse(value)
+        return parsed.scheme in ("http", "https") and bool(parsed.netloc)
+    return False
 
 
 @dataclass
@@ -82,9 +106,7 @@ class BoardStore:
         notes = notes.strip()
         if not title:
             raise ValueError("Card title is required")
-
-        if priority not in (1, 2, 3, 4):
-            raise ValueError("Priority must be 1–4")
+        priority = _priority(priority)
 
         board = self.load()
         self._require_column(board, column)
@@ -117,10 +139,7 @@ class BoardStore:
         if "project" in patch:
             card["project"] = str(patch["project"]).strip()
         if "priority" in patch:
-            p = int(patch["priority"])
-            if p not in (1, 2, 3, 4):
-                raise ValueError("Priority must be 1–4")
-            card["priority"] = p
+            card["priority"] = _priority(patch["priority"])
         if "column" in patch:
             column = str(patch["column"])
             self._require_column(board, column)
@@ -142,9 +161,12 @@ class BoardStore:
             fit = str(bg.get("fit", "cover"))
             if fit not in ("cover", "contain", "center"):
                 raise ValueError("background.fit must be cover, contain, or center")
+            value = str(bg.get("value", "")).strip()
+            if not _valid_background_value(bg_type, value):
+                raise ValueError("background.value must be http(s) or /uploads/<hex>.<ext>")
             settings["background"] = {
                 "type": bg_type,
-                "value": str(bg.get("value", "")).strip(),
+                "value": value,
                 "fit": fit,
             }
         board["settings"] = settings

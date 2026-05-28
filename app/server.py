@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import base64
+from email import policy
+from email.parser import BytesParser
 import json
 import mimetypes
 import os
@@ -45,24 +47,27 @@ def store_from_env() -> BoardStore:
 
 
 def _parse_multipart(data: bytes, boundary: bytes) -> tuple[bytes, str, str]:
-    delim = b"--" + boundary
-    parts = data.split(delim)
-    for part in parts[1:]:
-        if part.startswith(b"--"):
+    message = BytesParser(policy=policy.default).parsebytes(
+        b"Content-Type: multipart/form-data; boundary="
+        + boundary
+        + b"\r\nMIME-Version: 1.0\r\n\r\n"
+        + data
+    )
+    if not message.is_multipart():
+        return b"", "application/octet-stream", ".bin"
+
+    first_readable_part = None
+    for part in message.iter_parts():
+        payload = part.get_payload(decode=True)
+        if payload is None:
             continue
-        if b"\r\n\r\n" not in part:
-            continue
-        header_raw, body = part.split(b"\r\n\r\n", 1)
-        body = body.rstrip(b"\r\n")
-        headers_text = header_raw.decode("utf-8", errors="replace")
-        mime = "application/octet-stream"
-        ext = ".bin"
-        for line in headers_text.splitlines():
-            if line.lower().startswith("content-type:"):
-                mime = line.split(":", 1)[1].strip().lower()
-                ext = _MIME_TO_EXT.get(mime, ".bin")
-        return body, mime, ext
-    return b"", "application/octet-stream", ".bin"
+        mime = part.get_content_type().lower()
+        parsed = (payload, mime, _MIME_TO_EXT.get(mime, ".bin"))
+        if part.get_filename() or part.get_param("name", header="content-disposition") == "file":
+            return parsed
+        if first_readable_part is None:
+            first_readable_part = parsed
+    return first_readable_part or (b"", "application/octet-stream", ".bin")
 
 
 class KanbanHandler(BaseHTTPRequestHandler):
@@ -94,12 +99,15 @@ class KanbanHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         if parsed.path == "/api/cards":
             payload = self._payload()
+            priority = payload.get("priority", 4)
+            if not isinstance(priority, int) or isinstance(priority, bool):
+                raise ValueError("Priority must be 1–4")
             card = self.store.create_card(
                 str(payload.get("title", "")),
                 str(payload.get("notes", "")),
                 str(payload.get("column", "backlog")),
                 project=str(payload.get("project", "")),
-                priority=int(payload.get("priority", 4)),
+                priority=priority,
             )
             self._json(HTTPStatus.CREATED, card)
             return
@@ -240,7 +248,7 @@ class KanbanHandler(BaseHTTPRequestHandler):
     def handle_one_request(self) -> None:
         try:
             super().handle_one_request()
-        except (ValueError, KeyError) as exc:
+        except (ValueError, KeyError, TypeError) as exc:
             self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc).strip("'")})
 
 

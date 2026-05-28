@@ -10,6 +10,7 @@ const modal = document.querySelector("#modal");
 let board = { settings: { background: { type: "none", value: "", fit: "cover" } }, columns: [], cards: [] };
 let draggedId = null;
 let activeCardId = null;
+const modalPatchQueues = new Map();
 
 // ── API ────────────────────────────────────────────────────────────
 
@@ -80,6 +81,13 @@ function esc(str) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+function cssUrlValue(str) {
+  return String(str)
+    .replace(/[\0-\x1F\x7F]/g, "")
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"');
 }
 
 function render() {
@@ -206,8 +214,18 @@ function closeModal() {
 }
 
 function modalSave(patch) {
-  if (!activeCardId) return;
-  updateCard(activeCardId, patch);
+  const cardId = activeCardId;
+  if (!cardId) return;
+  const previous = modalPatchQueues.get(cardId) || Promise.resolve();
+  const next = previous
+    .catch(() => {})
+    .then(() => updateCard(cardId, patch));
+  modalPatchQueues.set(cardId, next);
+  next
+    .catch((err) => console.error("Failed to save card:", err))
+    .finally(() => {
+      if (modalPatchQueues.get(cardId) === next) modalPatchQueues.delete(cardId);
+    });
 }
 
 // Modal event wiring
@@ -281,7 +299,7 @@ function applyBg(settings) {
     document.body.style.removeProperty("--board-bg-size");
   } else {
     const sizeMap = { cover: "cover", contain: "contain", center: "auto" };
-    document.body.style.setProperty("--board-bg-image", `url("${value}")`);
+    document.body.style.setProperty("--board-bg-image", `url("${cssUrlValue(value)}")`);
     document.body.style.setProperty("--board-bg-size", sizeMap[fit] || "cover");
     document.body.classList.add("has-bg-image");
   }
