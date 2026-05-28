@@ -16,21 +16,12 @@
         <div class="composer-wrap">
           <form id="card-form" class="composer">
             <input
-              id="card-title-input"
+              id="quick-add"
               type="text"
-              placeholder="New card title"
+              placeholder="New card - e.g. Fix bug @Auth p2 | check token expiry"
               autocomplete="off"
               required
             />
-            <input id="card-project-input" type="text" placeholder="Project" autocomplete="off" />
-            <select id="card-priority-input" aria-label="Priority">
-              <option value="1">P1</option>
-              <option value="2">P2</option>
-              <option value="3">P3</option>
-              <option value="4" selected>P4</option>
-            </select>
-            <input id="card-notes-input" type="text" placeholder="Notes" autocomplete="off" />
-            <button class="composer-submit" type="submit">Add</button>
           </form>
         </div>
         <button class="settings-btn" id="settings-toggle" type="button" aria-label="Board settings">⚙</button>

@@ -1,9 +1,6 @@
 const boardEl = document.querySelector("#board");
 const form = document.querySelector("#card-form");
-const titleInput = document.querySelector("#card-title-input");
-const projectInput = document.querySelector("#card-project-input");
-const priorityInput = document.querySelector("#card-priority-input");
-const notesInput = document.querySelector("#card-notes-input");
+const quickAddEl = document.querySelector("#quick-add");
 const searchInput = document.querySelector("#search-input");
 const projectFilter = document.querySelector("#project-filter");
 const priorityFilter = document.querySelector("#priority-filter");
@@ -35,6 +32,25 @@ async function api(path, options = {}) {
 }
 
 // ── Sort/filter ────────────────────────────────────────────────────
+
+function parseQuickAdd(raw) {
+  let text = raw;
+  let notes = "";
+  let project = "";
+  let priority = 4;
+
+  const pipeIdx = text.indexOf("|");
+  if (pipeIdx !== -1) {
+    notes = text.slice(pipeIdx + 1).trim();
+    text = text.slice(0, pipeIdx).trim();
+  }
+
+  text = text.replace(/@(\S+)/g, (_, w) => { project = w; return ""; }).trim();
+  text = text.replace(/\bp([1-4])\b/gi, (_, n) => { priority = parseInt(n, 10); return ""; }).trim();
+  text = text.replace(/\s{2,}/g, " ").trim();
+
+  return { title: text, notes, project, priority };
+}
 
 function cardsFor(columnId) {
   const query = searchInput.value.trim().toLowerCase();
@@ -339,10 +355,9 @@ document.querySelector("#modal-column").addEventListener("change", (e) => {
 
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
-  const title = titleInput.value.trim();
-  const notes = notesInput.value.trim();
-  const project = projectInput.value.trim();
-  const priority = parseInt(priorityInput.value, 10);
+  const raw = quickAddEl.value.trim();
+  if (!raw) return;
+  const { title, notes, project, priority } = parseQuickAdd(raw);
   if (!title) return;
   try {
     const card = await api("/api/cards", {
@@ -350,11 +365,8 @@ form.addEventListener("submit", async (e) => {
       body: JSON.stringify({ title, notes, project, priority, column: board.columns[0]?.id || "backlog" }),
     });
     board.cards.push(card);
-    titleInput.value = "";
-    notesInput.value = "";
-    projectInput.value = "";
-    priorityInput.value = "4";
-    titleInput.focus();
+    quickAddEl.value = "";
+    quickAddEl.focus();
     render();
   } catch (err) {
     console.error("Failed to add card:", err);
@@ -370,7 +382,7 @@ document.addEventListener("keydown", (e) => {
     e.preventDefault();
     searchInput.focus();
   }
-  if (e.key === "n" && !e.target.closest("input, textarea, select")) titleInput.focus();
+  if (e.key === "n" && !e.target.closest("input, textarea, select")) quickAddEl.focus();
 });
 
 // ── Background ─────────────────────────────────────────────────────
