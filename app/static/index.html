@@ -16,17 +16,39 @@
         <div class="composer-wrap">
           <form id="card-form" class="composer">
             <input
-              id="quick-add"
+              id="card-title-input"
               type="text"
-              placeholder="New card — e.g. Fix bug @Auth p2 | check token expiry"
+              placeholder="New card title"
               autocomplete="off"
               required
             />
+            <input id="card-project-input" type="text" placeholder="Project" autocomplete="off" />
+            <select id="card-priority-input" aria-label="Priority">
+              <option value="1">P1</option>
+              <option value="2">P2</option>
+              <option value="3">P3</option>
+              <option value="4" selected>P4</option>
+            </select>
+            <input id="card-notes-input" type="text" placeholder="Notes" autocomplete="off" />
+            <button class="composer-submit" type="submit">Add</button>
           </form>
-          <div class="composer-preview" id="composer-preview" aria-live="polite"></div>
         </div>
         <button class="settings-btn" id="settings-toggle" type="button" aria-label="Board settings">⚙</button>
       </header>
+
+      <section class="toolbar" aria-label="Board filters">
+        <input id="search-input" type="search" placeholder="Search cards" />
+        <select id="project-filter" aria-label="Filter by project">
+          <option value="">All projects</option>
+        </select>
+        <select id="priority-filter" aria-label="Filter by priority">
+          <option value="">All priorities</option>
+          <option value="1">P1</option>
+          <option value="2">P2</option>
+          <option value="3">P3</option>
+          <option value="4">P4</option>
+        </select>
+      </section>
 
       <div class="settings-panel" id="settings-panel">
         <div class="settings-tabs">
@@ -77,6 +99,8 @@
 
       <section id="board" class="board" aria-label="Kanban board"></section>
     </main>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
     <!-- Card expand modal -->
     <div class="modal-backdrop" id="modal-backdrop" role="dialog" aria-modal="true" aria-label="Edit card">
