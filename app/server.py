@@ -5,6 +5,7 @@ import json
 import mimetypes
 import os
 import secrets
+import uuid
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -15,10 +16,39 @@ from .storage import BoardStore
 
 ROOT = Path(__file__).resolve().parent
 STATIC = ROOT / "static"
+UPLOADS = ROOT / "static" / "uploads"
+ALLOWED_UPLOAD_MIME = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 
 
 def store_from_env() -> BoardStore:
     return BoardStore(Path(os.environ.get("KANBAN_DATA", "data/board.json")))
+
+
+def _parse_multipart(data: bytes, boundary: bytes) -> tuple[bytes, str, str]:
+    delim = b"--" + boundary
+    parts = data.split(delim)
+    for part in parts[1:]:
+        if part.startswith(b"--"):
+            continue
+        if b"\r\n\r\n" not in part:
+            continue
+        header_raw, body = part.split(b"\r\n\r\n", 1)
+        body = body.rstrip(b"\r\n")
+        headers_text = header_raw.decode("utf-8", errors="replace")
+        mime = "application/octet-stream"
+        ext = ".bin"
+        for line in headers_text.splitlines():
+            if line.lower().startswith("content-type:"):
+                mime = line.split(":", 1)[1].strip().lower()
+                ext_map = {
+                    "image/jpeg": ".jpg",
+                    "image/png": ".png",
+                    "image/webp": ".webp",
+                    "image/gif": ".gif",
+                }
+                ext = ext_map.get(mime, ".bin")
+        return body, mime, ext
+    return b"", "application/octet-stream", ".bin"
 
 
 class KanbanHandler(BaseHTTPRequestHandler):
@@ -54,8 +84,35 @@ class KanbanHandler(BaseHTTPRequestHandler):
                 str(payload.get("title", "")),
                 str(payload.get("notes", "")),
                 str(payload.get("column", "backlog")),
+                project=str(payload.get("project", "")),
+                priority=int(payload.get("priority", 4)),
             )
             self._json(HTTPStatus.CREATED, card)
+            return
+
+        if parsed.path == "/api/upload":
+            content_type = self.headers.get("content-type", "")
+            if not content_type.startswith("multipart/form-data"):
+                self._json(HTTPStatus.BAD_REQUEST, {"error": "multipart/form-data required"})
+                return
+            length = int(self.headers.get("content-length", "0") or "0")
+            raw = self.rfile.read(length)
+            boundary = None
+            for part in content_type.split(";"):
+                part = part.strip()
+                if part.startswith("boundary="):
+                    boundary = part[9:].strip('"')
+            if not boundary:
+                self._json(HTTPStatus.BAD_REQUEST, {"error": "Missing boundary"})
+                return
+            file_data, mime, ext = _parse_multipart(raw, boundary.encode())
+            if mime not in ALLOWED_UPLOAD_MIME:
+                self._json(HTTPStatus.BAD_REQUEST, {"error": "Unsupported image type"})
+                return
+            UPLOADS.mkdir(parents=True, exist_ok=True)
+            filename = uuid.uuid4().hex + ext
+            (UPLOADS / filename).write_bytes(file_data)
+            self._json(HTTPStatus.CREATED, {"path": f"/uploads/{filename}"})
             return
 
         self._json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
@@ -69,6 +126,11 @@ class KanbanHandler(BaseHTTPRequestHandler):
             card_id = unquote(parsed.path[len(prefix) :])
             card = self.store.update_card(card_id, self._payload())
             self._json(HTTPStatus.OK, card)
+            return
+
+        if parsed.path == "/api/board/settings":
+            settings = self.store.update_settings(self._payload())
+            self._json(HTTPStatus.OK, settings)
             return
 
         self._json(HTTPStatus.NOT_FOUND, {"error": "Not found"})

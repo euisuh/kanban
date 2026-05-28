@@ -97,6 +97,50 @@ def test_basic_auth_gate(tmp_path: Path) -> None:
         thread.join(timeout=2)
 
 
+def test_patch_board_settings(tmp_path: Path) -> None:
+    prev_cred = os.environ.pop("KANBAN_CREDENTIAL", None)
+    HandlerForTest.store = BoardStore(tmp_path / "board.json")
+    server = ThreadingHTTPServer(("127.0.0.1", 0), HandlerForTest)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    port = server.server_address[1]
+    try:
+        status, body = request(
+            port, "PATCH", "/api/board/settings",
+            {"background": {"type": "url", "value": "https://example.com/bg.jpg", "fit": "cover"}},
+        )
+        assert status == 200
+        assert body["background"]["type"] == "url"
+        assert body["background"]["value"] == "https://example.com/bg.jpg"
+    finally:
+        if prev_cred is not None:
+            os.environ["KANBAN_CREDENTIAL"] = prev_cred
+        server.shutdown()
+        thread.join(timeout=2)
+
+
+def test_card_api_accepts_project_and_priority(tmp_path: Path) -> None:
+    prev_cred = os.environ.pop("KANBAN_CREDENTIAL", None)
+    HandlerForTest.store = BoardStore(tmp_path / "board.json")
+    server = ThreadingHTTPServer(("127.0.0.1", 0), HandlerForTest)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    port = server.server_address[1]
+    try:
+        status, card = request(
+            port, "POST", "/api/cards",
+            {"title": "Ship", "notes": "", "column": "backlog", "project": "Infra", "priority": 2},
+        )
+        assert status == 201
+        assert card["project"] == "Infra"
+        assert card["priority"] == 2
+    finally:
+        if prev_cred is not None:
+            os.environ["KANBAN_CREDENTIAL"] = prev_cred
+        server.shutdown()
+        thread.join(timeout=2)
+
+
 def test_head_requires_basic_auth(tmp_path: Path) -> None:
     os.environ["KANBAN_CREDENTIAL"] = "kanban:secret"
     HandlerForTest.store = BoardStore(tmp_path / "board.json")
