@@ -35,6 +35,7 @@ def request(port: int, method: str, path: str, body: dict[str, Any] | None = Non
 
 
 def test_card_api_lifecycle(tmp_path: Path) -> None:
+    prev_cred = os.environ.pop("KANBAN_CREDENTIAL", None)
     HandlerForTest.store = BoardStore(tmp_path / "board.json")
     server = ThreadingHTTPServer(("127.0.0.1", 0), HandlerForTest)
     thread = threading.Thread(target=server.serve_forever)
@@ -63,6 +64,8 @@ def test_card_api_lifecycle(tmp_path: Path) -> None:
         assert status == 204
         assert body is None
     finally:
+        if prev_cred is not None:
+            os.environ["KANBAN_CREDENTIAL"] = prev_cred
         server.shutdown()
         thread.join(timeout=2)
 
