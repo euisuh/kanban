@@ -36,12 +36,12 @@
         </div>
 
         <div class="settings-pane active" id="pane-upload">
-          <label>
+          <label class="settings-field">
             Image file
             <input type="file" id="bg-file" accept="image/jpeg,image/png,image/webp,image/gif" />
           </label>
-          <fieldset style="border:0;padding:0;margin:0">
-            <legend style="font-size:0.82rem;color:var(--muted);margin-bottom:4px">Fit</legend>
+          <fieldset class="settings-field settings-fit">
+            <legend>Fit</legend>
             <div class="settings-fit-group" id="fit-group-upload">
               <button class="fit-btn active" data-fit="cover" type="button">Cover</button>
               <button class="fit-btn" data-fit="contain" type="button">Contain</button>
@@ -53,12 +53,12 @@
         </div>
 
         <div class="settings-pane" id="pane-url">
-          <label>
+          <label class="settings-field">
             Image URL
             <input type="url" id="bg-url" placeholder="https://example.com/image.jpg" />
           </label>
-          <fieldset style="border:0;padding:0;margin:0">
-            <legend style="font-size:0.82rem;color:var(--muted);margin-bottom:4px">Fit</legend>
+          <fieldset class="settings-field settings-fit">
+            <legend>Fit</legend>
             <div class="settings-fit-group" id="fit-group-url">
               <button class="fit-btn active" data-fit="cover" type="button">Cover</button>
               <button class="fit-btn" data-fit="contain" type="button">Contain</button>
@@ -70,7 +70,7 @@
         </div>
 
         <div class="settings-pane" id="pane-none">
-          <p style="color:var(--muted);font-size:0.85rem;margin:0">Remove background image and revert to default gradient.</p>
+          <p class="settings-note">Remove background image and revert to default gradient.</p>
           <button class="settings-apply" id="apply-none">Apply</button>
         </div>
       </div>

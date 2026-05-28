@@ -67,9 +67,11 @@ h1 {
 /* ── Composer (quick-add) ───────────────────────── */
 
 .composer-wrap {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 6px;
+  align-self: end;
 }
 
 .composer {
@@ -97,13 +99,18 @@ h1 {
 .composer input:focus { background: #f4efe4; }
 
 .composer-preview {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 4px;
+  right: 4px;
   min-height: 18px;
-  padding: 0 4px;
+  padding: 0;
   font-size: 0.78rem;
   color: var(--muted);
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
+  pointer-events: none;
 }
 
 .composer-preview span { opacity: 0.9; }
@@ -113,6 +120,7 @@ h1 {
 .settings-btn {
   width: 44px;
   height: 44px;
+  align-self: end;
   display: grid;
   place-items: center;
   border: 1px solid var(--line);
@@ -132,6 +140,8 @@ h1 {
 
 .settings-panel {
   display: none;
+  width: min(760px, 100%);
+  margin-left: auto;
   margin-bottom: 20px;
   padding: 16px;
   background: rgba(255, 253, 248, 0.88);
@@ -145,7 +155,7 @@ h1 {
 .settings-tabs {
   display: flex;
   gap: 8px;
-  margin-bottom: 14px;
+  margin-bottom: 16px;
 }
 
 .settings-tab {
@@ -166,23 +176,50 @@ h1 {
 .settings-tab:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
 .settings-pane { display: none; }
-.settings-pane.active { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
 
-.settings-pane label {
+.settings-pane.active {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) auto auto auto;
+  gap: 14px;
+  align-items: end;
+}
+
+.settings-field {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  min-width: 0;
   font-size: 0.82rem;
   color: var(--muted);
 }
 
+.settings-field legend {
+  padding: 0;
+  margin-bottom: 4px;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.settings-fit {
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+
 .settings-pane input[type="text"],
 .settings-pane input[type="url"] {
+  width: 100%;
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 6px 10px;
   background: var(--panel);
-  min-width: 260px;
+  min-width: 0;
+  color: var(--ink);
+}
+
+.settings-pane input[type="file"] {
+  width: 100%;
+  max-width: 320px;
   color: var(--ink);
 }
 
@@ -220,6 +257,8 @@ h1 {
 .settings-preview.visible { display: block; }
 
 .settings-apply {
+  min-width: 84px;
+  height: 34px;
   padding: 7px 18px;
   background: var(--ink);
   color: white;
@@ -230,6 +269,12 @@ h1 {
 }
 
 .settings-apply:hover { opacity: 0.85; }
+
+.settings-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
 
 /* ── Board ──────────────────────────────────────── */
 
@@ -538,11 +583,20 @@ h1 {
 @media (max-width: 980px) {
   .topbar { grid-template-columns: 1fr 44px; }
   .composer-wrap { grid-column: 1 / -1; }
+  .settings-btn { grid-column: 2; grid-row: 1; }
   .board { grid-template-columns: repeat(2, minmax(220px, 1fr)); }
 }
 
 @media (max-width: 620px) {
   .shell { width: min(100vw - 20px, 560px); padding: 18px 0; }
+  .topbar { gap: 14px; margin-bottom: 36px; }
+  .composer-preview { top: calc(100% + 5px); }
+  .settings-panel { padding: 12px; }
+  .settings-tabs { overflow-x: auto; }
+  .settings-pane.active { grid-template-columns: 1fr; align-items: stretch; }
+  .settings-pane input[type="file"] { max-width: none; }
+  .settings-preview { width: 100%; height: 120px; }
+  .settings-apply { width: 100%; }
   .board { grid-template-columns: 1fr; }
   .dropzone { min-height: 220px; }
   .modal-row { grid-template-columns: 1fr; }
