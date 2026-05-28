@@ -126,6 +126,7 @@ h1 {
 }
 
 .settings-btn:hover { background: #f4efe4; color: var(--ink); }
+.settings-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
 /* ── Settings panel ─────────────────────────────── */
 
@@ -162,6 +163,7 @@ h1 {
   color: white;
   border-color: var(--ink);
 }
+.settings-tab:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
 .settings-pane { display: none; }
 .settings-pane.active { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
@@ -179,7 +181,7 @@ h1 {
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 6px 10px;
-  background: white;
+  background: var(--panel);
   min-width: 260px;
   color: var(--ink);
 }
@@ -204,6 +206,7 @@ h1 {
   color: white;
   border-color: var(--focus);
 }
+.fit-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
 .settings-preview {
   width: 80px;
@@ -384,6 +387,7 @@ h1 {
 }
 
 .delete:hover { background: #f0e9dc; color: var(--ink); }
+.delete:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
 /* ── Modal overlay ──────────────────────────────── */
 
@@ -401,7 +405,7 @@ h1 {
 
 .modal-backdrop.open {
   opacity: 1;
-  pointer-events: all;
+  pointer-events: auto;
 }
 
 .modal {
@@ -448,6 +452,7 @@ h1 {
 }
 
 .modal-close:hover { background: #f0e9dc; color: var(--ink); }
+.modal-close:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
 .modal-section {
   margin-bottom: 16px;
