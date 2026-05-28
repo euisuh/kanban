@@ -6,11 +6,13 @@ from email.parser import BytesParser
 import json
 import mimetypes
 import os
+import re
 import secrets
 import uuid
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from threading import Lock
 from urllib.parse import unquote, urlparse
 
 from .storage import BoardStore
@@ -42,23 +44,51 @@ def _is_valid_image_bytes(data: bytes) -> bool:
     return False
 
 
-def _parse_credentials() -> dict[str, str]:
-    """Returns {username: password} from KANBAN_CREDENTIALS or KANBAN_CREDENTIAL."""
+_USERNAME_RE = re.compile(r'^[A-Za-z0-9_-]{1,64}$')
+
+# Module-level store cache so concurrent requests share one lock per user.
+_store_cache: dict[str, BoardStore] = {}
+_store_cache_lock = Lock()
+
+
+def _parse_credentials() -> dict[str, str] | None:
+    """Return {username: password} dict, or None if no credential env vars set.
+
+    Returns None  → no-auth mode (open access).
+    Returns {}    → credentials configured but all malformed → fail closed.
+    Returns {...} → valid credentials.
+    """
     raw = os.environ.get("KANBAN_CREDENTIALS", "")
     if raw:
         result: dict[str, str] = {}
         for entry in raw.split(","):
             entry = entry.strip()
-            if ":" in entry:
-                username, password = entry.split(":", 1)
-                result[username.strip()] = password.strip()
-        return result
+            if ":" not in entry:
+                print(f"WARNING: malformed KANBAN_CREDENTIALS entry (no colon), skipping")
+                continue
+            username, password = entry.split(":", 1)
+            if not username:
+                print("WARNING: empty username in KANBAN_CREDENTIALS entry, skipping")
+                continue
+            if not _USERNAME_RE.match(username):
+                print(f"WARNING: invalid username {username!r} in KANBAN_CREDENTIALS, skipping")
+                continue
+            if username in result:
+                print(f"WARNING: duplicate username {username!r} in KANBAN_CREDENTIALS, last entry wins")
+            result[username] = password
+        return result  # may be empty dict → fail closed
     # backward compat: single credential
     single = os.environ.get("KANBAN_CREDENTIAL", "")
-    if single and ":" in single:
+    if single:
+        if ":" not in single:
+            print("WARNING: malformed KANBAN_CREDENTIAL (no colon) — auth disabled, fail closed")
+            return {}
         username, password = single.split(":", 1)
+        if not username or not _USERNAME_RE.match(username):
+            print(f"WARNING: invalid username in KANBAN_CREDENTIAL — fail closed")
+            return {}
         return {username: password}
-    return {}
+    return None  # no credential vars set → no-auth mode
 
 
 def _parse_multipart(data: bytes, boundary: bytes) -> tuple[bytes, str, str]:
@@ -91,14 +121,28 @@ class KanbanHandler(BaseHTTPRequestHandler):
 
     def _get_store(self, username: str) -> BoardStore:
         if username:
-            root = self.__class__.data_root or Path(
+            root = (self.__class__.data_root or Path(
                 os.environ.get("KANBAN_DATA_ROOT", "data")
-            )
-            return BoardStore(root / username / "board.json")
+            )).resolve()
+            board_path = (root / username / "board.json").resolve()
+            # Defense-in-depth: reject if resolved path escapes root.
+            if not board_path.is_relative_to(root):
+                raise ValueError("Invalid username")
+            cache_key = str(board_path)
+            with _store_cache_lock:
+                if cache_key not in _store_cache:
+                    _store_cache[cache_key] = BoardStore(board_path)
+                return _store_cache[cache_key]
         # no-auth fallback — honour legacy KANBAN_DATA
         if self.__class__.data_root is not None:
-            return BoardStore(self.__class__.data_root / "board.json")
-        return BoardStore(Path(os.environ.get("KANBAN_DATA", "data/board.json")))
+            board_path = (self.__class__.data_root / "board.json").resolve()
+        else:
+            board_path = Path(os.environ.get("KANBAN_DATA", "data/board.json")).resolve()
+        cache_key = str(board_path)
+        with _store_cache_lock:
+            if cache_key not in _store_cache:
+                _store_cache[cache_key] = BoardStore(board_path)
+            return _store_cache[cache_key]
 
     def do_HEAD(self) -> None:
         username = self._authorized()
@@ -220,16 +264,25 @@ class KanbanHandler(BaseHTTPRequestHandler):
     def _authorized(self) -> str | None:
         """Returns username (or '' for no-auth mode) on success; sends 401 and returns None on failure."""
         credentials = _parse_credentials()
-        if not credentials:
-            return ""
-
-        actual = self.headers.get("authorization", "")
-        for username, password in credentials.items():
-            expected = "Basic " + base64.b64encode(
-                f"{username}:{password}".encode("utf-8")
-            ).decode("ascii")
-            if secrets.compare_digest(actual, expected):
-                return username
+        if credentials is None:
+            return ""  # no credential env vars → open access
+        # Empty dict means vars were set but all entries were malformed → fail closed.
+        if credentials:
+            header = self.headers.get("authorization", "")
+            # Parse claimed username from Basic header to avoid loop timing leak.
+            if header.startswith("Basic "):
+                try:
+                    decoded = base64.b64decode(header[6:]).decode("utf-8")
+                    claimed_user, _, claimed_pass = decoded.partition(":")
+                except Exception:
+                    claimed_user = claimed_pass = ""
+                expected_pass = credentials.get(claimed_user)
+                if (
+                    expected_pass is not None
+                    and claimed_user
+                    and secrets.compare_digest(claimed_pass, expected_pass)
+                ):
+                    return claimed_user
 
         body = b"Authentication required\n"
         self.send_response(HTTPStatus.UNAUTHORIZED)

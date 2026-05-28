@@ -585,6 +585,8 @@ h1 {
 .delete:hover { background: rgba(255, 180, 171, 0.15); color: var(--error); }
 .delete:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; opacity: 1; }
 
+@media (pointer: coarse) { .delete { opacity: 1; } }
+
 .empty-column {
   padding: 20px 10px;
   color: var(--on-surface-variant);

@@ -287,3 +287,31 @@ def test_head_requires_basic_auth(tmp_path: Path) -> None:
     finally:
         os.environ.pop("KANBAN_CREDENTIAL", None)
         _stop(server, thread)
+
+
+def test_malformed_credentials_fail_closed(tmp_path: Path) -> None:
+    os.environ["KANBAN_CREDENTIALS"] = "no-colon-here,also-bad"
+    server, thread, port = _start(tmp_path)
+    try:
+        status, _ = request(port, "GET", "/api/board")
+        assert status == 401
+    finally:
+        os.environ.pop("KANBAN_CREDENTIALS", None)
+        _stop(server, thread)
+
+
+def test_invalid_username_characters_rejected(tmp_path: Path) -> None:
+    os.environ["KANBAN_CREDENTIALS"] = "../evil:pass,valid:pass2"
+    server, thread, port = _start(tmp_path)
+    try:
+        # ../evil should be rejected at parse time; only valid:pass2 is accepted
+        bad_auth = "Basic " + base64.b64encode(b"../evil:pass").decode()
+        status, _ = request(port, "GET", "/api/board", auth=bad_auth)
+        assert status == 401
+
+        good_auth = "Basic " + base64.b64encode(b"valid:pass2").decode()
+        status, _ = request(port, "GET", "/api/board", auth=good_auth)
+        assert status == 200
+    finally:
+        os.environ.pop("KANBAN_CREDENTIALS", None)
+        _stop(server, thread)
