@@ -187,7 +187,7 @@ function openModal(cardId) {
   document.querySelector("#modal-title").value = card.title;
   document.querySelector("#modal-notes").value = card.notes;
   document.querySelector("#modal-project").value = card.project || "";
-  document.querySelector("#modal-priority-badge").textContent = `p${card.priority}`;
+  document.querySelector("#modal-priority-badge").textContent = `P${card.priority}`;
   document.querySelector("#modal-priority-badge").className = `priority-badge priority-${card.priority}`;
   document.querySelector("#modal-project-chip").textContent = card.project || "";
   document.querySelector("#modal-project-chip").style.display = card.project ? "" : "none";
@@ -253,7 +253,7 @@ document.querySelectorAll(".priority-btn").forEach((btn) => {
     const p = parseInt(btn.dataset.p);
     document.querySelectorAll(".priority-btn").forEach((b) => b.classList.remove("active"));
     btn.classList.add("active");
-    document.querySelector("#modal-priority-badge").textContent = `p${p}`;
+    document.querySelector("#modal-priority-badge").textContent = `P${p}`;
     document.querySelector("#modal-priority-badge").className = `priority-badge priority-${p}`;
     modalSave({ priority: p });
   });
