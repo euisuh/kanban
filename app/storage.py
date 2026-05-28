@@ -35,6 +35,7 @@ def default_board() -> dict[str, Any]:
                 "project": "",
                 "priority": 4,
                 "column": "backlog",
+                "sortIndex": 0,
                 "createdAt": now,
                 "updatedAt": now,
             }
@@ -47,6 +48,12 @@ def _priority(value: Any) -> int:
         raise ValueError("Priority must be 1–4")
     if value not in (1, 2, 3, 4):
         raise ValueError("Priority must be 1–4")
+    return value
+
+
+def _sort_index(value: Any) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise ValueError("sortIndex must be a non-negative integer")
     return value
 
 
@@ -74,8 +81,7 @@ class BoardStore:
         with self._lock:
             if not self.path.exists():
                 board = default_board()
-                self.save(board)
-                return board
+                return self.save(board)
 
             with self.path.open("r", encoding="utf-8") as handle:
                 board = json.load(handle)
@@ -111,6 +117,7 @@ class BoardStore:
         board = self.load()
         self._require_column(board, column)
         now = int(time.time())
+        sort_index = max((card.get("sortIndex", 0) for card in board["cards"] if card["column"] == column), default=-1) + 1
         card = {
             "id": uuid.uuid4().hex,
             "title": title,
@@ -118,6 +125,7 @@ class BoardStore:
             "project": project.strip(),
             "priority": priority,
             "column": column,
+            "sortIndex": sort_index,
             "createdAt": now,
             "updatedAt": now,
         }
@@ -144,6 +152,8 @@ class BoardStore:
             column = str(patch["column"])
             self._require_column(board, column)
             card["column"] = column
+        if "sortIndex" in patch:
+            card["sortIndex"] = _sort_index(patch["sortIndex"])
         card["updatedAt"] = int(time.time())
         self.save(board)
         return card
@@ -186,7 +196,7 @@ class BoardStore:
         column_ids = {column["id"] for column in columns}
         cards = []
         now = int(time.time())
-        for raw in board.get("cards", []):
+        for index, raw in enumerate(board.get("cards", [])):
             card = {
                 "id": str(raw.get("id") or uuid.uuid4().hex),
                 "title": str(raw.get("title") or "Untitled").strip() or "Untitled",
@@ -194,6 +204,11 @@ class BoardStore:
                 "project": str(raw.get("project") or "").strip(),
                 "priority": int(raw["priority"]) if raw.get("priority") in (1, 2, 3, 4) else 4,
                 "column": str(raw.get("column") or columns[0]["id"]),
+                "sortIndex": (
+                    raw.get("sortIndex")
+                    if isinstance(raw.get("sortIndex"), int) and not isinstance(raw.get("sortIndex"), bool)
+                    else index
+                ),
                 "createdAt": int(raw.get("createdAt") or now),
                 "updatedAt": int(raw.get("updatedAt") or now),
             }

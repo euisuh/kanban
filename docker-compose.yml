@@ -10,4 +10,5 @@ services:
     env_file:
       - .env
     environment:
+      KANBAN_DATA_ROOT: /data
       KANBAN_DATA: /data/board.json

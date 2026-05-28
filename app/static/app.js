@@ -1,15 +1,19 @@
 const boardEl = document.querySelector("#board");
 const form = document.querySelector("#card-form");
 const quickAddEl = document.querySelector("#quick-add");
-const previewEl = document.querySelector("#composer-preview");
+const searchInput = document.querySelector("#search-input");
+const projectFilter = document.querySelector("#project-filter");
+const priorityFilter = document.querySelector("#priority-filter");
 const columnTemplate = document.querySelector("#column-template");
 const cardTemplate = document.querySelector("#card-template");
 const backdrop = document.querySelector("#modal-backdrop");
 const modal = document.querySelector("#modal");
+const toast = document.querySelector("#toast");
 
 let board = { settings: { background: { type: "none", value: "", fit: "cover" } }, columns: [], cards: [] };
 let draggedId = null;
 let activeCardId = null;
+let toastTimer = null;
 const modalPatchQueues = new Map();
 
 // ── API ────────────────────────────────────────────────────────────
@@ -27,7 +31,7 @@ async function api(path, options = {}) {
   return res.json();
 }
 
-// ── Quick-add parser ───────────────────────────────────────────────
+// ── Sort/filter ────────────────────────────────────────────────────
 
 function parseQuickAdd(raw) {
   let text = raw;
@@ -48,31 +52,32 @@ function parseQuickAdd(raw) {
   return { title: text, notes, project, priority };
 }
 
-function updateComposerPreview(raw) {
-  if (!raw.trim()) { previewEl.innerHTML = ""; return; }
-  const { title, notes, project, priority } = parseQuickAdd(raw);
-  const parts = [];
-  if (title) parts.push(`<span><strong>${esc(title)}</strong></span>`);
-  if (project) parts.push(`<span>@${esc(project)}</span>`);
-  parts.push(`<span>p${priority}</span>`);
-  if (notes) parts.push(`<span>· ${esc(notes)}</span>`);
-  previewEl.innerHTML = parts.join(" ");
-}
-
-quickAddEl.addEventListener("input", () => updateComposerPreview(quickAddEl.value));
-
-// ── Sort ───────────────────────────────────────────────────────────
-
 function cardsFor(columnId) {
+  const query = searchInput.value.trim().toLowerCase();
+  const project = projectFilter.value;
+  const priority = priorityFilter.value;
   return board.cards
     .filter((c) => c.column === columnId)
-    .sort((a, b) => a.priority - b.priority || a.createdAt - b.createdAt);
+    .filter((c) => !query || [c.title, c.notes, c.project].some((value) => String(value || "").toLowerCase().includes(query)))
+    .filter((c) => !project || c.project === project)
+    .filter((c) => !priority || String(c.priority) === priority)
+    .sort((a, b) => (a.sortIndex ?? 0) - (b.sortIndex ?? 0) || a.createdAt - b.createdAt);
+}
+
+function allCardsFor(columnId) {
+  return board.cards
+    .filter((c) => c.column === columnId)
+    .sort((a, b) => (a.sortIndex ?? 0) - (b.sortIndex ?? 0) || a.createdAt - b.createdAt);
 }
 
 // ── Render ─────────────────────────────────────────────────────────
 
 function formatDate(ts) {
   return new Date(ts * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+function formatShortDate(ts) {
+  return new Date(ts * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
 function esc(str) {
@@ -83,6 +88,20 @@ function esc(str) {
     .replace(/"/g, "&quot;");
 }
 
+function projectColor(project) {
+  const palette = [
+    ["#e9f5ef", "#1f6d59"],
+    ["#eef1fb", "#4e5fa8"],
+    ["#fff1df", "#9b5a18"],
+    ["#f7eaf1", "#9a3f67"],
+    ["#e8f3f7", "#2d6778"],
+    ["#f1edfb", "#6952a5"],
+  ];
+  let hash = 0;
+  for (const ch of String(project)) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+  return palette[hash % palette.length];
+}
+
 function cssUrlValue(str) {
   return String(str)
     .replace(/[\0-\x1F\x7F]/g, "")
@@ -91,6 +110,7 @@ function cssUrlValue(str) {
 }
 
 function render() {
+  renderProjectFilter();
   boardEl.replaceChildren();
   board.columns.forEach((column) => {
     const node = columnTemplate.content.firstElementChild.cloneNode(true);
@@ -99,7 +119,7 @@ function render() {
 
     node.querySelector(".dot").style.background = column.accent;
     node.querySelector("h2").textContent = column.title;
-    node.querySelector(".count").textContent = columnCards.length;
+    node.querySelector(".count").textContent = `${columnCards.length}/${allCardsFor(column.id).length}`;
     dropzone.dataset.column = column.id;
 
     dropzone.addEventListener("dragover", (e) => { e.preventDefault(); dropzone.classList.add("dragover"); });
@@ -109,15 +129,29 @@ function render() {
       dropzone.classList.remove("dragover");
       if (!draggedId) return;
       try {
-        await updateCard(draggedId, { column: column.id });
+        await moveCard(draggedId, column.id, e.target.closest(".card")?.dataset.id || null);
       } catch (err) {
         console.error("Failed to move card:", err);
       }
     });
 
     columnCards.forEach((card) => dropzone.appendChild(renderCard(card)));
+    if (columnCards.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "empty-column";
+      empty.textContent = "No cards";
+      dropzone.appendChild(empty);
+    }
     boardEl.appendChild(node);
   });
+}
+
+function renderProjectFilter() {
+  const current = projectFilter.value;
+  const projects = [...new Set(board.cards.map((card) => card.project).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  projectFilter.replaceChildren(new Option("All projects", ""));
+  projects.forEach((project) => projectFilter.appendChild(new Option(project, project)));
+  projectFilter.value = projects.includes(current) ? current : "";
 }
 
 function renderCard(card) {
@@ -130,20 +164,26 @@ function renderCard(card) {
   const del = node.querySelector(".delete");
 
   node.dataset.id = card.id;
+  node.dataset.priority = card.priority;
   badge.textContent = `p${card.priority}`;
   badge.className = `priority-badge priority-${card.priority}`;
 
   if (card.project) {
     chip.textContent = card.project;
+    const [bg, fg] = projectColor(card.project);
+    chip.style.background = bg;
+    chip.style.color = fg;
     chip.style.display = "";
   } else {
     chip.style.display = "none";
+    chip.style.removeProperty("background");
+    chip.style.removeProperty("color");
   }
 
   titleEl.textContent = card.title;
   notesEl.textContent = card.notes;
   if (!card.notes) notesEl.style.display = "none";
-  dateEl.textContent = formatDate(card.createdAt);
+  dateEl.textContent = `Updated ${formatShortDate(card.updatedAt || card.createdAt)}`;
 
   node.addEventListener("dragstart", () => { draggedId = card.id; node.classList.add("dragging"); });
   node.addEventListener("dragend", () => { draggedId = null; node.classList.remove("dragging"); });
@@ -160,21 +200,70 @@ function renderCard(card) {
 
 // ── CRUD ───────────────────────────────────────────────────────────
 
-async function updateCard(id, patch) {
+async function updateCard(id, patch, shouldRender = true) {
   const updated = await api(`/api/cards/${encodeURIComponent(id)}`, {
     method: "PATCH",
     body: JSON.stringify(patch),
   });
   board.cards = board.cards.map((c) => (c.id === id ? updated : c));
-  render();
+  if (shouldRender) render();
   return updated;
 }
 
 async function deleteCard(id) {
+  const removed = board.cards.find((c) => c.id === id);
+  if (!removed) return;
   if (activeCardId === id) closeModal();
   await api(`/api/cards/${encodeURIComponent(id)}`, { method: "DELETE" });
   board.cards = board.cards.filter((c) => c.id !== id);
   render();
+  showUndo(removed);
+}
+
+async function moveCard(id, columnId, beforeId) {
+  if (beforeId === id) return;
+  const card = board.cards.find((item) => item.id === id);
+  if (!card) return;
+
+  const ordered = allCardsFor(columnId).filter((item) => item.id !== id);
+  const insertAt = beforeId ? ordered.findIndex((item) => item.id === beforeId) : -1;
+  card.column = columnId;
+  ordered.splice(insertAt >= 0 ? insertAt : ordered.length, 0, card);
+  ordered.forEach((item, index) => { item.sortIndex = index; });
+  render();
+
+  await Promise.all(ordered.map((item) => updateCard(item.id, { column: item.column, sortIndex: item.sortIndex }, false)));
+  render();
+}
+
+function showUndo(card) {
+  if (toastTimer) clearTimeout(toastTimer);
+  toast.replaceChildren();
+  const label = document.createElement("span");
+  label.textContent = "Card deleted";
+  const undo = document.createElement("button");
+  undo.type = "button";
+  undo.textContent = "Undo";
+  undo.addEventListener("click", async () => {
+    if (toastTimer) clearTimeout(toastTimer);
+    toast.classList.remove("open");
+    const restored = await api("/api/cards", {
+      method: "POST",
+      body: JSON.stringify({
+        title: card.title,
+        notes: card.notes || "",
+        project: card.project || "",
+        priority: card.priority,
+        column: card.column,
+      }),
+    });
+    const withOrder = await updateCard(restored.id, { sortIndex: card.sortIndex ?? 0 }, false);
+    board.cards.push(withOrder);
+    render();
+  });
+  toast.append(label, undo);
+  toast.classList.add("open");
+  toastTimer = setTimeout(() => toast.classList.remove("open"), 6000);
 }
 
 // ── Modal ──────────────────────────────────────────────────────────
@@ -187,11 +276,11 @@ function openModal(cardId) {
   document.querySelector("#modal-title").value = card.title;
   document.querySelector("#modal-notes").value = card.notes;
   document.querySelector("#modal-project").value = card.project || "";
-  document.querySelector("#modal-priority-badge").textContent = `p${card.priority}`;
+  document.querySelector("#modal-priority-badge").textContent = `P${card.priority}`;
   document.querySelector("#modal-priority-badge").className = `priority-badge priority-${card.priority}`;
   document.querySelector("#modal-project-chip").textContent = card.project || "";
   document.querySelector("#modal-project-chip").style.display = card.project ? "" : "none";
-  document.querySelector("#modal-date").textContent = `Created ${formatDate(card.createdAt)}`;
+  document.querySelector("#modal-date").textContent = `Created ${formatDate(card.createdAt)} · Updated ${formatDate(card.updatedAt || card.createdAt)}`;
 
   // Priority buttons
   document.querySelectorAll(".priority-btn").forEach((btn) => {
@@ -253,7 +342,7 @@ document.querySelectorAll(".priority-btn").forEach((btn) => {
     const p = parseInt(btn.dataset.p);
     document.querySelectorAll(".priority-btn").forEach((b) => b.classList.remove("active"));
     btn.classList.add("active");
-    document.querySelector("#modal-priority-badge").textContent = `p${p}`;
+    document.querySelector("#modal-priority-badge").textContent = `P${p}`;
     document.querySelector("#modal-priority-badge").className = `priority-badge priority-${p}`;
     modalSave({ priority: p });
   });
@@ -278,15 +367,23 @@ form.addEventListener("submit", async (e) => {
     });
     board.cards.push(card);
     quickAddEl.value = "";
-    previewEl.innerHTML = "";
+    quickAddEl.focus();
     render();
   } catch (err) {
     console.error("Failed to add card:", err);
   }
 });
 
-quickAddEl.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") { quickAddEl.value = ""; previewEl.innerHTML = ""; }
+searchInput.addEventListener("input", render);
+projectFilter.addEventListener("change", render);
+priorityFilter.addEventListener("change", render);
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "/" && !e.target.closest("input, textarea, select")) {
+    e.preventDefault();
+    searchInput.focus();
+  }
+  if (e.key === "n" && !e.target.closest("input, textarea, select")) quickAddEl.focus();
 });
 
 // ── Background ─────────────────────────────────────────────────────

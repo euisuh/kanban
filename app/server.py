@@ -6,11 +6,13 @@ from email.parser import BytesParser
 import json
 import mimetypes
 import os
+import re
 import secrets
 import uuid
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from threading import Lock
 from urllib.parse import unquote, urlparse
 
 from .storage import BoardStore
@@ -42,8 +44,51 @@ def _is_valid_image_bytes(data: bytes) -> bool:
     return False
 
 
-def store_from_env() -> BoardStore:
-    return BoardStore(Path(os.environ.get("KANBAN_DATA", "data/board.json")))
+_USERNAME_RE = re.compile(r'^[A-Za-z0-9_-]{1,64}$')
+
+# Module-level store cache so concurrent requests share one lock per user.
+_store_cache: dict[str, BoardStore] = {}
+_store_cache_lock = Lock()
+
+
+def _parse_credentials() -> dict[str, str] | None:
+    """Return {username: password} dict, or None if no credential env vars set.
+
+    Returns None  → no-auth mode (open access).
+    Returns {}    → credentials configured but all malformed → fail closed.
+    Returns {...} → valid credentials.
+    """
+    raw = os.environ.get("KANBAN_CREDENTIALS", "")
+    if raw:
+        result: dict[str, str] = {}
+        for entry in raw.split(","):
+            entry = entry.strip()
+            if ":" not in entry:
+                print(f"WARNING: malformed KANBAN_CREDENTIALS entry (no colon), skipping")
+                continue
+            username, password = entry.split(":", 1)
+            if not username:
+                print("WARNING: empty username in KANBAN_CREDENTIALS entry, skipping")
+                continue
+            if not _USERNAME_RE.match(username):
+                print(f"WARNING: invalid username {username!r} in KANBAN_CREDENTIALS, skipping")
+                continue
+            if username in result:
+                print(f"WARNING: duplicate username {username!r} in KANBAN_CREDENTIALS, last entry wins")
+            result[username] = password
+        return result  # may be empty dict → fail closed
+    # backward compat: single credential
+    single = os.environ.get("KANBAN_CREDENTIAL", "")
+    if single:
+        if ":" not in single:
+            print("WARNING: malformed KANBAN_CREDENTIAL (no colon) — auth disabled, fail closed")
+            return {}
+        username, password = single.split(":", 1)
+        if not username or not _USERNAME_RE.match(username):
+            print(f"WARNING: invalid username in KANBAN_CREDENTIAL — fail closed")
+            return {}
+        return {username: password}
+    return None  # no credential vars set → no-auth mode
 
 
 def _parse_multipart(data: bytes, boundary: bytes) -> tuple[bytes, str, str]:
@@ -71,38 +116,69 @@ def _parse_multipart(data: bytes, boundary: bytes) -> tuple[bytes, str, str]:
 
 
 class KanbanHandler(BaseHTTPRequestHandler):
-    store = store_from_env()
+    # Override in tests to control where board files land.
+    data_root: Path | None = None
+
+    def _get_store(self, username: str) -> BoardStore:
+        if username and os.environ.get("KANBAN_CREDENTIALS", ""):
+            root = (self.__class__.data_root or Path(
+                os.environ.get("KANBAN_DATA_ROOT", "data")
+            )).resolve()
+            board_path = (root / username / "board.json").resolve()
+            # Defense-in-depth: reject if resolved path escapes root.
+            if not board_path.is_relative_to(root):
+                raise ValueError("Invalid username")
+            cache_key = str(board_path)
+            with _store_cache_lock:
+                if cache_key not in _store_cache:
+                    _store_cache[cache_key] = BoardStore(board_path)
+                return _store_cache[cache_key]
+        # no-auth fallback — honour legacy KANBAN_DATA
+        if self.__class__.data_root is not None:
+            board_path = (self.__class__.data_root / "board.json").resolve()
+        else:
+            board_path = Path(os.environ.get("KANBAN_DATA", "data/board.json")).resolve()
+        cache_key = str(board_path)
+        with _store_cache_lock:
+            if cache_key not in _store_cache:
+                _store_cache[cache_key] = BoardStore(board_path)
+            return _store_cache[cache_key]
 
     def do_HEAD(self) -> None:
-        if not self._authorized():
+        username = self._authorized()
+        if username is None:
             return
+        store = self._get_store(username)
         parsed = urlparse(self.path)
         if parsed.path == "/api/board":
-            self._json(HTTPStatus.OK, self.store.load(), send_body=False)
+            self._json(HTTPStatus.OK, store.load(), send_body=False)
             return
-
         self._static(parsed.path, send_body=False)
 
     def do_GET(self) -> None:
-        if not self._authorized():
+        username = self._authorized()
+        if username is None:
             return
+        store = self._get_store(username)
         parsed = urlparse(self.path)
         if parsed.path == "/api/board":
-            self._json(HTTPStatus.OK, self.store.load())
+            self._json(HTTPStatus.OK, store.load())
             return
-
         self._static(parsed.path)
 
     def do_POST(self) -> None:
-        if not self._authorized():
+        username = self._authorized()
+        if username is None:
             return
+        store = self._get_store(username)
         parsed = urlparse(self.path)
+
         if parsed.path == "/api/cards":
             payload = self._payload()
             priority = payload.get("priority", 4)
             if not isinstance(priority, int) or isinstance(priority, bool):
                 raise ValueError("Priority must be 1–4")
-            card = self.store.create_card(
+            card = store.create_card(
                 str(payload.get("title", "")),
                 str(payload.get("notes", "")),
                 str(payload.get("column", "backlog")),
@@ -149,30 +225,34 @@ class KanbanHandler(BaseHTTPRequestHandler):
         self._json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
 
     def do_PATCH(self) -> None:
-        if not self._authorized():
+        username = self._authorized()
+        if username is None:
             return
+        store = self._get_store(username)
         parsed = urlparse(self.path)
         prefix = "/api/cards/"
         if parsed.path.startswith(prefix):
-            card_id = unquote(parsed.path[len(prefix) :])
-            card = self.store.update_card(card_id, self._payload())
+            card_id = unquote(parsed.path[len(prefix):])
+            card = store.update_card(card_id, self._payload())
             self._json(HTTPStatus.OK, card)
             return
 
         if parsed.path == "/api/board/settings":
-            settings = self.store.update_settings(self._payload())
+            settings = store.update_settings(self._payload())
             self._json(HTTPStatus.OK, settings)
             return
 
         self._json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
 
     def do_DELETE(self) -> None:
-        if not self._authorized():
+        username = self._authorized()
+        if username is None:
             return
+        store = self._get_store(username)
         parsed = urlparse(self.path)
         prefix = "/api/cards/"
         if parsed.path.startswith(prefix):
-            self.store.delete_card(unquote(parsed.path[len(prefix) :]))
+            store.delete_card(unquote(parsed.path[len(prefix):]))
             self._json(HTTPStatus.NO_CONTENT, None)
             return
 
@@ -181,15 +261,28 @@ class KanbanHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args: object) -> None:
         print("%s - %s" % (self.address_string(), fmt % args))
 
-    def _authorized(self) -> bool:
-        credential = os.environ.get("KANBAN_CREDENTIAL", "")
-        if not credential:
-            return True
-
-        expected = "Basic " + base64.b64encode(credential.encode("utf-8")).decode("ascii")
-        actual = self.headers.get("authorization", "")
-        if secrets.compare_digest(actual, expected):
-            return True
+    def _authorized(self) -> str | None:
+        """Returns username (or '' for no-auth mode) on success; sends 401 and returns None on failure."""
+        credentials = _parse_credentials()
+        if credentials is None:
+            return ""  # no credential env vars → open access
+        # Empty dict means vars were set but all entries were malformed → fail closed.
+        if credentials:
+            header = self.headers.get("authorization", "")
+            # Parse claimed username from Basic header to avoid loop timing leak.
+            if header.startswith("Basic "):
+                try:
+                    decoded = base64.b64decode(header[6:]).decode("utf-8")
+                    claimed_user, _, claimed_pass = decoded.partition(":")
+                except Exception:
+                    claimed_user = claimed_pass = ""
+                expected_pass = credentials.get(claimed_user)
+                if (
+                    expected_pass is not None
+                    and claimed_user
+                    and secrets.compare_digest(claimed_pass, expected_pass)
+                ):
+                    return claimed_user
 
         body = b"Authentication required\n"
         self.send_response(HTTPStatus.UNAUTHORIZED)
@@ -198,7 +291,7 @@ class KanbanHandler(BaseHTTPRequestHandler):
         self.send_header("content-length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
-        return False
+        return None
 
     def _payload(self) -> dict[str, object]:
         length = int(self.headers.get("content-length", "0") or "0")

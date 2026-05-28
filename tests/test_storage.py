@@ -51,14 +51,16 @@ def test_card_create_accepts_project_and_priority(tmp_path: Path) -> None:
     card = store.create_card("Task", "", "backlog", project="Auth", priority=1)
     assert card["project"] == "Auth"
     assert card["priority"] == 1
+    assert card["sortIndex"] == 1
 
 
 def test_update_card_project_and_priority(tmp_path: Path) -> None:
     store = BoardStore(tmp_path / "board.json")
     card = store.create_card("Task", "", "backlog")
-    updated = store.update_card(card["id"], {"project": "Design", "priority": 2})
+    updated = store.update_card(card["id"], {"project": "Design", "priority": 2, "sortIndex": 0})
     assert updated["project"] == "Design"
     assert updated["priority"] == 2
+    assert updated["sortIndex"] == 0
 
 
 def test_invalid_priority_rejected(tmp_path: Path) -> None:
