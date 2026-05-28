@@ -164,6 +164,7 @@ function renderCard(card) {
   const del = node.querySelector(".delete");
 
   node.dataset.id = card.id;
+  node.dataset.priority = card.priority;
   badge.textContent = `p${card.priority}`;
   badge.className = `priority-badge priority-${card.priority}`;
 
