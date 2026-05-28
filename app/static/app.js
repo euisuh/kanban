@@ -100,7 +100,11 @@ function render() {
       e.preventDefault();
       dropzone.classList.remove("dragover");
       if (!draggedId) return;
-      await updateCard(draggedId, { column: column.id });
+      try {
+        await updateCard(draggedId, { column: column.id });
+      } catch (err) {
+        console.error("Failed to move card:", err);
+      }
     });
 
     columnCards.forEach((card) => dropzone.appendChild(renderCard(card)));
@@ -249,14 +253,18 @@ form.addEventListener("submit", async (e) => {
   if (!raw) return;
   const { title, notes, project, priority } = parseQuickAdd(raw);
   if (!title) return;
-  const card = await api("/api/cards", {
-    method: "POST",
-    body: JSON.stringify({ title, notes, project, priority, column: board.columns[0]?.id || "backlog" }),
-  });
-  board.cards.push(card);
-  quickAddEl.value = "";
-  previewEl.innerHTML = "";
-  render();
+  try {
+    const card = await api("/api/cards", {
+      method: "POST",
+      body: JSON.stringify({ title, notes, project, priority, column: board.columns[0]?.id || "backlog" }),
+    });
+    board.cards.push(card);
+    quickAddEl.value = "";
+    previewEl.innerHTML = "";
+    render();
+  } catch (err) {
+    console.error("Failed to add card:", err);
+  }
 });
 
 quickAddEl.addEventListener("keydown", (e) => {
@@ -341,9 +349,16 @@ document.querySelector("#apply-upload").addEventListener("click", async () => {
   if (!file) return;
   const fd = new FormData();
   fd.append("file", file);
-  const res = await fetch("/api/upload", { method: "POST", body: fd });
-  if (!res.ok) { alert("Upload failed"); return; }
-  const { path } = await res.json();
+  let uploadResult;
+  try {
+    const res = await fetch("/api/upload", { method: "POST", body: fd });
+    if (!res.ok) { alert("Upload failed"); return; }
+    uploadResult = await res.json();
+  } catch (err) {
+    alert("Upload failed: " + err.message);
+    return;
+  }
+  const { path } = uploadResult;
   const fit = activeFit("fit-group-upload");
   const settings = await api("/api/board/settings", {
     method: "PATCH",
@@ -359,24 +374,32 @@ document.querySelector("#apply-url").addEventListener("click", async () => {
   const value = document.querySelector("#bg-url").value.trim();
   if (!value.startsWith("http")) { alert("Enter a valid URL starting with http"); return; }
   const fit = activeFit("fit-group-url");
-  const settings = await api("/api/board/settings", {
-    method: "PATCH",
-    body: JSON.stringify({ background: { type: "url", value, fit } }),
-  });
-  board.settings = { background: settings.background };
-  applyBg(board.settings);
-  document.querySelector("#settings-panel").classList.remove("open");
+  try {
+    const settings = await api("/api/board/settings", {
+      method: "PATCH",
+      body: JSON.stringify({ background: { type: "url", value, fit } }),
+    });
+    board.settings = { background: settings.background };
+    applyBg(board.settings);
+    document.querySelector("#settings-panel").classList.remove("open");
+  } catch (err) {
+    alert("Failed to apply background: " + err.message);
+  }
 });
 
 // Apply none
 document.querySelector("#apply-none").addEventListener("click", async () => {
-  const settings = await api("/api/board/settings", {
-    method: "PATCH",
-    body: JSON.stringify({ background: { type: "none", value: "", fit: "cover" } }),
-  });
-  board.settings = { background: settings.background };
-  applyBg(board.settings);
-  document.querySelector("#settings-panel").classList.remove("open");
+  try {
+    const settings = await api("/api/board/settings", {
+      method: "PATCH",
+      body: JSON.stringify({ background: { type: "none", value: "", fit: "cover" } }),
+    });
+    board.settings = { background: settings.background };
+    applyBg(board.settings);
+    document.querySelector("#settings-panel").classList.remove("open");
+  } catch (err) {
+    alert("Failed to apply background: " + err.message);
+  }
 });
 
 // ── Boot ───────────────────────────────────────────────────────────
@@ -388,5 +411,8 @@ async function boot() {
 }
 
 boot().catch((err) => {
-  boardEl.innerHTML = `<p style="color:red;padding:20px">${err.message}</p>`;
+  const p = document.createElement("p");
+  p.style.cssText = "color:red;padding:20px";
+  p.textContent = err.message;
+  boardEl.appendChild(p);
 });
