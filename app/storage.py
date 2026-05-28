@@ -22,12 +22,15 @@ DEFAULT_COLUMNS = [
 def default_board() -> dict[str, Any]:
     now = int(time.time())
     return {
+        "settings": {"background": {"type": "none", "value": "", "fit": "cover"}},
         "columns": DEFAULT_COLUMNS,
         "cards": [
             {
                 "id": "welcome",
                 "title": "Make the board yours",
                 "notes": "Add cards, drag them between columns, and keep the JSON file backed up.",
+                "project": "",
+                "priority": 4,
                 "column": "backlog",
                 "createdAt": now,
                 "updatedAt": now,
@@ -74,7 +77,7 @@ class BoardStore:
                     os.unlink(tmp_name)
             return board
 
-    def create_card(self, title: str, notes: str, column: str) -> dict[str, Any]:
+    def create_card(self, title: str, notes: str, column: str, project: str = "", priority: int = 4) -> dict[str, Any]:
         title = title.strip()
         notes = notes.strip()
         if not title:
@@ -87,6 +90,8 @@ class BoardStore:
             "id": uuid.uuid4().hex,
             "title": title,
             "notes": notes,
+            "project": project.strip(),
+            "priority": priority,
             "column": column,
             "createdAt": now,
             "updatedAt": now,
@@ -106,6 +111,13 @@ class BoardStore:
             card["title"] = title
         if "notes" in patch:
             card["notes"] = str(patch["notes"]).strip()
+        if "project" in patch:
+            card["project"] = str(patch["project"]).strip()
+        if "priority" in patch:
+            p = int(patch["priority"])
+            if p not in (1, 2, 3, 4):
+                raise ValueError("Priority must be 1–4")
+            card["priority"] = p
         if "column" in patch:
             column = str(patch["column"])
             self._require_column(board, column)
@@ -113,6 +125,26 @@ class BoardStore:
         card["updatedAt"] = int(time.time())
         self.save(board)
         return card
+
+    def update_settings(self, patch: dict[str, Any]) -> dict[str, Any]:
+        board = self.load()
+        settings = board.get("settings") or {}
+        if "background" in patch:
+            bg = patch["background"]
+            bg_type = str(bg.get("type", "none"))
+            if bg_type not in ("none", "url", "upload"):
+                raise ValueError("background.type must be none, url, or upload")
+            fit = str(bg.get("fit", "cover"))
+            if fit not in ("cover", "contain", "center"):
+                raise ValueError("background.fit must be cover, contain, or center")
+            settings["background"] = {
+                "type": bg_type,
+                "value": str(bg.get("value", "")).strip(),
+                "fit": fit,
+            }
+        board["settings"] = settings
+        self.save(board)
+        return settings
 
     def delete_card(self, card_id: str) -> None:
         board = self.load()
@@ -132,6 +164,8 @@ class BoardStore:
                 "id": str(raw.get("id") or uuid.uuid4().hex),
                 "title": str(raw.get("title") or "Untitled").strip() or "Untitled",
                 "notes": str(raw.get("notes") or "").strip(),
+                "project": str(raw.get("project") or "").strip(),
+                "priority": int(raw["priority"]) if raw.get("priority") in (1, 2, 3, 4) else 4,
                 "column": str(raw.get("column") or columns[0]["id"]),
                 "createdAt": int(raw.get("createdAt") or now),
                 "updatedAt": int(raw.get("updatedAt") or now),
@@ -139,7 +173,11 @@ class BoardStore:
             if card["column"] not in column_ids:
                 card["column"] = columns[0]["id"]
             cards.append(card)
-        return {"columns": columns, "cards": cards}
+        bg_raw = (board.get("settings") or {}).get("background") or {}
+        bg_type = bg_raw.get("type", "none") if bg_raw.get("type") in ("none", "url", "upload") else "none"
+        fit = bg_raw.get("fit", "cover") if bg_raw.get("fit") in ("cover", "contain", "center") else "cover"
+        settings = {"background": {"type": bg_type, "value": str(bg_raw.get("value") or ""), "fit": fit}}
+        return {"settings": settings, "columns": columns, "cards": cards}
 
     def _find_card(self, board: dict[str, Any], card_id: str) -> dict[str, Any]:
         for card in board["cards"]:
