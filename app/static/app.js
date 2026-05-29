@@ -692,6 +692,15 @@ function closeBgPanel() {
   bgOverlay.hidden = true;
 }
 
+function dataUrlToBlob(dataUrl) {
+  const [header, b64] = dataUrl.split(",");
+  const mime = (header.match(/:(.*?);/) || [])[1] || "application/octet-stream";
+  const binary = atob(b64);
+  const buf = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) buf[i] = binary.charCodeAt(i);
+  return new Blob([buf], { type: mime });
+}
+
 async function applyBgPanel() {
   let type  = bgDraft.mode;
   let value = bgDraft.value || "";
@@ -700,12 +709,16 @@ async function applyBgPanel() {
   if (type === "upload") {
     if (!bgDraft.uploadDataUrl) { closeBgPanel(); return; }
     try {
-      const blob = await fetch(bgDraft.uploadDataUrl).then((r) => r.blob());
+      const blob = dataUrlToBlob(bgDraft.uploadDataUrl);
       if (!blob.type.startsWith("image/")) throw new Error("Not an image");
+      const ext  = blob.type === "image/png" ? ".png" : blob.type === "image/gif" ? ".gif" : ".jpg";
       const fd = new FormData();
-      fd.append("file", blob, "background" + (blob.type === "image/png" ? ".png" : ".jpg"));
+      fd.append("file", blob, "background" + ext);
       const res = await fetch("/api/upload", { method: "POST", body: fd });
-      if (!res.ok) throw new Error("Upload failed");
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Server rejected upload");
+      }
       const { path } = await res.json();
       type = "upload"; value = path;
     } catch (err) {
