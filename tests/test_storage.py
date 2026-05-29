@@ -10,7 +10,7 @@ def test_store_creates_default_board(tmp_path: Path) -> None:
 
     board = store.load()
 
-    assert [column["id"] for column in board["columns"]] == ["backlog", "doing", "review", "done"]
+    assert [column["id"] for column in board["columns"]] == ["backlog", "todo", "doing", "review", "done"]
     assert board["cards"][0]["title"] == "Make the board yours"
     assert (tmp_path / "board.json").exists()
 

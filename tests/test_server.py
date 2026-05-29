@@ -226,7 +226,7 @@ def test_patch_board_settings_rejects_unsafe_url(tmp_path: Path) -> None:
             {"background": {"type": "url", "value": "javascript:alert(1)", "fit": "cover"}},
         )
         assert status == 400
-        assert body["error"] == "background.value must be http(s) or /uploads/<hex>.<ext>"
+        assert body["error"] == "background.value must be http(s), /uploads/<hex>.<ext>, or a preset id"
     finally:
         _restore_creds(*saved)
         _stop(server, thread)

@@ -13,13 +13,15 @@ from typing import Any
 
 
 DEFAULT_COLUMNS = [
-    {"id": "backlog", "title": "Backlog", "accent": "#7c8a99"},
-    {"id": "doing", "title": "Doing", "accent": "#2f7d6d"},
-    {"id": "review", "title": "Review", "accent": "#b7791f"},
-    {"id": "done", "title": "Done", "accent": "#5762b7"},
+    {"id": "backlog", "title": "Backlog",     "accent": "#7c8a99"},
+    {"id": "todo",    "title": "To Do",        "accent": "#2b93e0"},
+    {"id": "doing",   "title": "In Progress",  "accent": "#e08a2f"},
+    {"id": "review",  "title": "In Review",    "accent": "#8a6cd1"},
+    {"id": "done",    "title": "Done",         "accent": "#2f9268"},
 ]
 
 UPLOAD_BACKGROUND_RE = re.compile(r"^/uploads/[0-9a-fA-F]+\.(?:jpg|jpeg|png|webp|gif)$")
+PRESET_ID_RE = re.compile(r"^[a-z0-9_-]{1,32}$")
 
 
 def default_board() -> dict[str, Any]:
@@ -64,9 +66,10 @@ def _valid_background_value(bg_type: str, value: str) -> bool:
         return UPLOAD_BACKGROUND_RE.fullmatch(value) is not None
     if bg_type == "url":
         from urllib.parse import urlparse
-
         parsed = urlparse(value)
         return parsed.scheme in ("http", "https") and bool(parsed.netloc)
+    if bg_type == "preset":
+        return bool(PRESET_ID_RE.fullmatch(value))
     return False
 
 
@@ -166,14 +169,14 @@ class BoardStore:
             if not isinstance(bg, dict):
                 raise ValueError("background must be an object")
             bg_type = str(bg.get("type", "none"))
-            if bg_type not in ("none", "url", "upload"):
-                raise ValueError("background.type must be none, url, or upload")
+            if bg_type not in ("none", "url", "upload", "preset"):
+                raise ValueError("background.type must be none, url, upload, or preset")
             fit = str(bg.get("fit", "cover"))
             if fit not in ("cover", "contain", "center"):
                 raise ValueError("background.fit must be cover, contain, or center")
             value = str(bg.get("value", "")).strip()
             if not _valid_background_value(bg_type, value):
-                raise ValueError("background.value must be http(s) or /uploads/<hex>.<ext>")
+                raise ValueError("background.value must be http(s), /uploads/<hex>.<ext>, or a preset id")
             settings["background"] = {
                 "type": bg_type,
                 "value": value,
@@ -216,7 +219,7 @@ class BoardStore:
                 card["column"] = columns[0]["id"]
             cards.append(card)
         bg_raw = (board.get("settings") or {}).get("background") or {}
-        bg_type = bg_raw.get("type", "none") if bg_raw.get("type") in ("none", "url", "upload") else "none"
+        bg_type = bg_raw.get("type", "none") if bg_raw.get("type") in ("none", "url", "upload", "preset") else "none"
         fit = bg_raw.get("fit", "cover") if bg_raw.get("fit") in ("cover", "contain", "center") else "cover"
         settings = {"background": {"type": bg_type, "value": str(bg_raw.get("value") or ""), "fit": fit}}
         return {"settings": settings, "columns": columns, "cards": cards}

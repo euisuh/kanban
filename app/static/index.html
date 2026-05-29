@@ -1,181 +1,186 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="light" data-density="comfortable">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Kanban</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&family=Schibsted+Grotesk:wght@600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <main class="shell">
+    <div id="bg-tint"></div>
+    <div id="bg-layer" data-on="0"></div>
+
+    <div class="app">
+      <!-- Top bar -->
       <header class="topbar">
-        <div>
-          <p class="eyebrow">Self-hosted</p>
-          <h1>Kanban</h1>
+        <div class="brand">
+          <span class="mark"><i class="dot"></i>Kanban</span>
         </div>
-        <div class="composer-wrap">
-          <form id="card-form" class="composer">
+
+        <div class="quickadd" id="quickadd-wrap">
+          <form id="card-form" class="qa-input">
+            <svg class="qa-plus" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M10 4v12M4 10h12"/>
+            </svg>
             <input
               id="quick-add"
               type="text"
-              placeholder="New card - e.g. Fix bug @Auth p2 | check token expiry"
+              placeholder="Add a task…  e.g.  Ship login fix @auth p1 | check token expiry"
               autocomplete="off"
-              required
             />
+            <span class="qa-enter">⏎ Backlog</span>
           </form>
+          <div class="qa-preview hidden" id="qa-preview" aria-live="polite"></div>
         </div>
-        <button class="settings-btn" id="settings-toggle" type="button" aria-label="Board settings">⚙</button>
+
+        <button class="icon-btn" id="bg-toggle" type="button" title="Board background" aria-label="Board background">
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="4" width="14" height="12" rx="2"/>
+            <circle cx="7.5" cy="8.5" r="1.5"/>
+            <path d="m4 14 4-3.5 4 3 3-2.5 3 2.5"/>
+          </svg>
+        </button>
+        <button class="icon-btn" id="theme-toggle" type="button" title="Toggle theme" aria-label="Toggle theme">
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="10" cy="10" r="4"/>
+            <path d="M10 2v2M10 16v2M2 10h2M16 10h2M4.22 4.22l1.42 1.42M14.36 14.36l1.42 1.42M4.22 15.78l1.42-1.42M14.36 5.64l1.42-1.42"/>
+          </svg>
+        </button>
       </header>
 
-      <section class="toolbar" aria-label="Board filters">
-        <input id="search-input" type="search" placeholder="Search cards" />
-        <select id="project-filter" aria-label="Filter by project">
-          <option value="">All projects</option>
-        </select>
-        <select id="priority-filter" aria-label="Filter by priority">
-          <option value="">All priorities</option>
-          <option value="1">P1</option>
-          <option value="2">P2</option>
-          <option value="3">P3</option>
-          <option value="4">P4</option>
-        </select>
-      </section>
-
-      <div class="settings-panel" id="settings-panel">
-        <div class="settings-tabs">
-          <button class="settings-tab active" data-tab="upload" type="button">Upload</button>
-          <button class="settings-tab" data-tab="url" type="button">URL</button>
-          <button class="settings-tab" data-tab="none" type="button">None</button>
+      <!-- Filter rail -->
+      <div class="filters" id="filter-bar" role="toolbar" aria-label="Board filters">
+        <label class="search">
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2"/>
+          </svg>
+          <input id="search-input" type="search" placeholder="Search cards…" />
+        </label>
+        <div class="divider"></div>
+        <div class="filter-group" id="proj-filter-group">
+          <span class="lbl">Project</span>
         </div>
-
-        <div class="settings-pane active" id="pane-upload">
-          <label class="settings-field">
-            Image file
-            <input type="file" id="bg-file" accept="image/jpeg,image/png,image/webp,image/gif" />
-          </label>
-          <fieldset class="settings-field settings-fit">
-            <legend>Fit</legend>
-            <div class="settings-fit-group" id="fit-group-upload">
-              <button class="fit-btn active" data-fit="cover" type="button">Cover</button>
-              <button class="fit-btn" data-fit="contain" type="button">Contain</button>
-              <button class="fit-btn" data-fit="center" type="button">Center</button>
-            </div>
-          </fieldset>
-          <img class="settings-preview" id="preview-upload" alt="Preview" hidden />
-          <button class="settings-apply" id="apply-upload">Apply</button>
+        <div class="divider" id="proj-divider"></div>
+        <div class="filter-group" id="pri-filter-group">
+          <span class="lbl">Priority</span>
+          <!-- chips rendered by JS -->
         </div>
-
-        <div class="settings-pane" id="pane-url">
-          <label class="settings-field">
-            Image URL
-            <input type="url" id="bg-url" placeholder="https://example.com/image.jpg" />
-          </label>
-          <fieldset class="settings-field settings-fit">
-            <legend>Fit</legend>
-            <div class="settings-fit-group" id="fit-group-url">
-              <button class="fit-btn active" data-fit="cover" type="button">Cover</button>
-              <button class="fit-btn" data-fit="contain" type="button">Contain</button>
-              <button class="fit-btn" data-fit="center" type="button">Center</button>
-            </div>
-          </fieldset>
-          <img class="settings-preview" id="preview-url" alt="Preview" hidden />
-          <button class="settings-apply" id="apply-url">Apply</button>
-        </div>
-
-        <div class="settings-pane" id="pane-none">
-          <p class="settings-note">Remove background image and revert to default gradient.</p>
-          <button class="settings-apply" id="apply-none">Apply</button>
-        </div>
+        <button class="clear-filter" id="clear-filters" type="button" hidden>Clear</button>
       </div>
 
-      <section id="board" class="board" aria-label="Kanban board"></section>
-    </main>
+      <!-- Board -->
+      <div class="board-scroll">
+        <div class="board" id="board" aria-label="Kanban board"></div>
+      </div>
+    </div>
 
-    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <!-- Toast -->
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
-    <!-- Card expand modal -->
-    <div class="modal-backdrop" id="modal-backdrop" role="dialog" aria-modal="true" aria-label="Edit card">
-      <div class="modal" id="modal">
-        <div class="modal-header">
-          <span class="priority-badge" id="modal-priority-badge"></span>
-          <span class="project-chip" id="modal-project-chip"></span>
-          <button class="modal-close" id="modal-close" type="button" aria-label="Close">✕</button>
+    <!-- Card modal -->
+    <div class="overlay" id="modal-overlay" hidden role="dialog" aria-modal="true" aria-label="Edit card">
+      <div class="sheet" id="modal-sheet">
+        <div class="sheet-head">
+          <span class="ttl">Edit card</span>
+          <span class="status-readonly" id="modal-status-badge"></span>
+          <button class="icon-btn" id="modal-close" type="button" style="width:32px;height:32px" aria-label="Close">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m5 5 10 10M15 5 5 15"/>
+            </svg>
+          </button>
         </div>
-
-        <div class="modal-section">
-          <div class="modal-label">Title</div>
-          <input type="text" id="modal-title" />
-        </div>
-
-        <div class="modal-row modal-section">
-          <div>
-            <div class="modal-label">Project</div>
-            <input type="text" id="modal-project" placeholder="e.g. Auth" />
+        <div class="sheet-body">
+          <div class="field">
+            <input class="modal-title-input" type="text" id="modal-title" placeholder="Card title" />
           </div>
-          <div>
-            <div class="modal-label">Priority</div>
-            <div class="priority-group">
-              <button class="priority-btn p1" data-p="1" type="button">
-                <span>P1</span>
-                <small>Urgent</small>
-              </button>
-              <button class="priority-btn p2" data-p="2" type="button">
-                <span>P2</span>
-                <small>High</small>
-              </button>
-              <button class="priority-btn p3" data-p="3" type="button">
-                <span>P3</span>
-                <small>Normal</small>
-              </button>
-              <button class="priority-btn p4 active" data-p="4" type="button">
-                <span>P4</span>
-                <small>Low</small>
-              </button>
+          <div class="field">
+            <label for="modal-notes">Note</label>
+            <textarea id="modal-notes" placeholder="Add more detail…"></textarea>
+          </div>
+          <div class="row2">
+            <div class="field">
+              <label>Project</label>
+              <div class="choose" id="modal-proj-choose"></div>
+            </div>
+            <div class="field">
+              <label>Priority</label>
+              <div class="choose" id="modal-pri-choose"></div>
             </div>
           </div>
-          <div>
-            <div class="modal-label">Column</div>
-            <select id="modal-column"></select>
-          </div>
+          <div class="hint">Status is set by dragging the card between columns.</div>
         </div>
-
-        <div class="modal-section">
-          <div class="modal-label">Notes</div>
-          <textarea id="modal-notes"></textarea>
+        <div class="sheet-foot">
+          <button class="btn danger" id="modal-delete" type="button">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 6h12M8 6V4h4v2M6 6l.7 10a1 1 0 0 0 1 1h4.6a1 1 0 0 0 1-1L14 6"/>
+            </svg>
+            Delete
+          </button>
+          <span class="grow"></span>
+          <button class="btn ghost" id="modal-cancel" type="button">Cancel</button>
+          <button class="btn primary" id="modal-save" type="button">Save</button>
         </div>
+      </div>
+    </div>
 
-        <div class="modal-date" id="modal-date"></div>
+    <!-- Background panel -->
+    <div class="overlay" id="bg-overlay" hidden role="dialog" aria-modal="true" aria-label="Board background">
+      <div class="sheet narrow" id="bg-sheet">
+        <div class="sheet-head">
+          <svg style="width:18px;height:18px;color:var(--accent)" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="4" width="14" height="12" rx="2"/>
+            <circle cx="7.5" cy="8.5" r="1.5"/>
+            <path d="m4 14 4-3.5 4 3 3-2.5 3 2.5"/>
+          </svg>
+          <span class="ttl">Board background</span>
+          <span class="grow" style="flex:1"></span>
+          <button class="icon-btn" id="bg-close" type="button" style="width:32px;height:32px" aria-label="Close">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m5 5 10 10M15 5 5 15"/>
+            </svg>
+          </button>
+        </div>
+        <div class="sheet-body" id="bg-body">
+          <!-- rendered by JS -->
+        </div>
+        <div class="sheet-foot">
+          <span class="grow" style="flex:1"></span>
+          <button class="btn ghost" id="bg-cancel" type="button">Cancel</button>
+          <button class="btn primary" id="bg-apply" type="button">Apply</button>
+        </div>
+        <input class="sr-file" type="file" id="bg-file-input" accept="image/jpeg,image/png,image/webp,image/gif" />
       </div>
     </div>
 
     <!-- Templates -->
     <template id="column-template">
-      <article class="column">
-        <header class="column-head">
-          <span class="dot"></span>
-          <h2></h2>
+      <section class="column">
+        <header class="col-head">
+          <i class="tag"></i>
+          <span class="name"></span>
+          <span class="grow" style="flex:1"></span>
           <span class="count"></span>
         </header>
-        <div class="dropzone"></div>
-      </article>
+        <div class="col-cards"></div>
+      </section>
     </template>
 
     <template id="card-template">
-      <article class="card" draggable="true">
-        <div class="card-meta">
-          <span class="project-chip"></span>
-          <span class="priority-badge"></span>
-          <button class="delete" type="button" aria-label="Delete card">✕</button>
+      <div class="card" draggable="true">
+        <div class="card-top">
+          <div class="title"></div>
+          <span class="status-pill"><i class="sdot"></i><span class="sname"></span></span>
         </div>
-        <p class="card-title"></p>
-        <p class="card-notes"></p>
-        <div class="card-footer">
-          <span class="card-date"></span>
+        <div class="desc"></div>
+        <div class="card-foot">
+          <span class="proj-chip"><i class="pj"></i><span class="pname"></span></span>
+          <span class="grow" style="flex:1"></span>
+          <span class="pri"><i class="pdot"></i><span class="pshort"></span></span>
         </div>
-      </article>
+      </div>
     </template>
 
     <script src="/app.js" defer></script>
