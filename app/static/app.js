@@ -270,11 +270,11 @@ function render() {
       colNode.classList.remove("drag-over");
       removeDropLine(cards);
       const id = dragId || e.dataTransfer.getData("text/plain");
-      if (!id) return;
       const info = dropInfo && dropInfo.colId === col.id ? dropInfo : { colId: col.id, index: total, beforeId: null };
-      dropInfo = null;
       dragId = null;
-      try { await moveCard(id, col.id, info.beforeId); } catch (err) { console.error(err); }
+      dropInfo = null;
+      if (!id) { render(); return; }
+      try { await moveCard(id, col.id, info.beforeId); } catch (err) { console.error(err); render(); }
     });
 
     // render cards with optional empty state
@@ -365,19 +365,24 @@ function showUndo(card) {
   undoBtn.addEventListener("click", async () => {
     if (toastTimer) clearTimeout(toastTimer);
     toastEl.hidden = true;
-    const restored = await api("/api/cards", {
-      method: "POST",
-      body: JSON.stringify({
-        title:    card.title,
-        notes:    card.notes || "",
-        project:  card.project || "",
-        priority: card.priority,
-        column:   card.column,
-      }),
-    });
-    const withOrder = await updateCard(restored.id, { sortIndex: card.sortIndex ?? 0 }, false);
-    board.cards.push(withOrder);
-    render();
+    try {
+      const restored = await api("/api/cards", {
+        method: "POST",
+        body: JSON.stringify({
+          title:    card.title,
+          notes:    card.notes || "",
+          project:  card.project || "",
+          priority: card.priority,
+          column:   card.column,
+        }),
+      });
+      const withOrder = await updateCard(restored.id, { sortIndex: card.sortIndex ?? 0 }, false);
+      board.cards.push(withOrder);
+      render();
+    } catch (err) {
+      console.error("Undo failed:", err);
+      showToast("Undo failed — card could not be restored");
+    }
   });
   toastEl.append(label, undoBtn);
   toastEl.hidden = false;
@@ -656,10 +661,13 @@ function renderBgPanel() {
   }
 }
 
+let _bgFileToken = 0;
 function handleBgFile(file) {
   if (!file || !file.type.startsWith("image/")) return;
+  const token = ++_bgFileToken;
   const reader = new FileReader();
   reader.onload = (ev) => {
+    if (token !== _bgFileToken) return; // stale — newer selection in progress
     bgDraft.uploadDataUrl = ev.target.result;
     renderBgPanel();
   };
@@ -691,17 +699,19 @@ async function applyBgPanel() {
 
   if (type === "upload") {
     if (!bgDraft.uploadDataUrl) { closeBgPanel(); return; }
-    // upload file to server
-    const blob = await fetch(bgDraft.uploadDataUrl).then((r) => r.blob());
-    const fd = new FormData();
-    fd.append("file", blob, "background.jpg");
     try {
+      const blob = await fetch(bgDraft.uploadDataUrl).then((r) => r.blob());
+      if (!blob.type.startsWith("image/")) throw new Error("Not an image");
+      const fd = new FormData();
+      fd.append("file", blob, "background" + (blob.type === "image/png" ? ".png" : ".jpg"));
       const res = await fetch("/api/upload", { method: "POST", body: fd });
       if (!res.ok) throw new Error("Upload failed");
       const { path } = await res.json();
       type = "upload"; value = path;
     } catch (err) {
-      console.error(err); return;
+      console.error(err);
+      showToast("Upload failed: " + err.message);
+      return;
     }
   }
 
