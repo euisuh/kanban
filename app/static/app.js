@@ -568,7 +568,6 @@ function renderBgPanel() {
     btn.innerHTML = `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${m.icon}</svg>${m.label}`;
     btn.addEventListener("click", () => {
       bgDraft.mode = m.id;
-      if (m.id === "upload") bgFileInput.click();
       renderBgPanel();
     });
     modesDiv.appendChild(btn);
