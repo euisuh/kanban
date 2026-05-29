@@ -52,6 +52,14 @@ let dropInfo = null;   // { colId, beforeId, index }
 let activeCardId = null;
 let toastTimer = null;
 
+// ── Pointer drag state ────────────────────────────────────────
+let dragState = null;  // { id, startX, startY, offX, offY, w, started, threshold }
+let ghostEl   = null;
+let justDragged = false;
+let justDraggedTimer = null;
+let rafId = 0;
+let autoScroll = { vx: 0, vy: 0, colBody: null, x: 0, y: 0 };
+
 // filter state
 let searchQuery = "";
 let projFilter = new Set();
@@ -194,21 +202,21 @@ function renderCard(card) {
   // priority
   node.querySelector(".pshort").textContent = pri.short;
 
-  // drag
-  node.addEventListener("dragstart", (e) => {
-    dragId = card.id;
-    node.classList.add("dragging");
-    e.dataTransfer.effectAllowed = "move";
-    try { e.dataTransfer.setData("text/plain", card.id); } catch (_) {}
-  });
-  node.addEventListener("dragend", () => {
-    dragId = null;
-    dropInfo = null;
-    node.classList.remove("dragging");
-    render();
+  // pointer drag — grip initiates drag on all devices; card body only for mouse
+  const grip = node.querySelector(".card-grip");
+  grip.addEventListener("click", (e) => e.stopPropagation());
+  grip.addEventListener("pointerdown", (e) => { e.stopPropagation(); beginDrag(e, card.id, true); });
+
+  node.addEventListener("pointerdown", (e) => {
+    if (e.target.closest(".card-grip")) return;
+    beginDrag(e, card.id, false);
   });
 
-  node.addEventListener("click", () => openModal(card.id));
+  node.addEventListener("click", (e) => {
+    if (e.target.closest(".card-grip")) return;
+    if (justDragged) return;
+    openModal(card.id);
+  });
 
   return node;
 }
@@ -224,60 +232,20 @@ function render() {
 
   for (const col of board.columns) {
     const colNode = columnTpl.content.firstElementChild.cloneNode(true);
-    const tag   = colNode.querySelector(".tag");
+    colNode.dataset.colId = col.id;
+
+    const tag    = colNode.querySelector(".tag");
     const nameEl = colNode.querySelector(".name");
     const countEl = colNode.querySelector(".count");
-    const cards  = colNode.querySelector(".col-cards");
+    const cards   = colNode.querySelector(".col-cards");
 
     tag.style.background = col.accent || "#7c8a99";
-    nameEl.textContent  = col.title;
+    nameEl.textContent   = col.title;
 
     const visible = cardsFor(col.id);
     const total   = allCardsFor(col.id).length;
     countEl.textContent = anyFilter ? `${visible.length}/${total}` : total;
 
-    colNode.addEventListener("dragover", (e) => {
-      e.preventDefault();
-      e.dataTransfer.dropEffect = "move";
-      colNode.classList.add("drag-over");
-
-      // compute drop index from cursor Y
-      const cardEls = [...cards.querySelectorAll(".card:not(.dragging)")];
-      let index = cardEls.length;
-      let beforeId = null;
-      for (let i = 0; i < cardEls.length; i++) {
-        const r = cardEls[i].getBoundingClientRect();
-        if (e.clientY < r.top + r.height / 2) {
-          index = i;
-          beforeId = cardEls[i].dataset.id;
-          break;
-        }
-      }
-      dropInfo = { colId: col.id, index, beforeId };
-      renderDropLine(cards, cardEls, index);
-    });
-
-    colNode.addEventListener("dragleave", (e) => {
-      if (!colNode.contains(e.relatedTarget)) {
-        colNode.classList.remove("drag-over");
-        dropInfo = null;
-        removeDropLine(cards);
-      }
-    });
-
-    colNode.addEventListener("drop", async (e) => {
-      e.preventDefault();
-      colNode.classList.remove("drag-over");
-      removeDropLine(cards);
-      const id = dragId || e.dataTransfer.getData("text/plain");
-      const info = dropInfo && dropInfo.colId === col.id ? dropInfo : { colId: col.id, index: total, beforeId: null };
-      dragId = null;
-      dropInfo = null;
-      if (!id) { render(); return; }
-      try { await moveCard(id, col.id, info.beforeId); } catch (err) { console.error(err); render(); }
-    });
-
-    // render cards with optional empty state
     if (visible.length === 0) {
       const empty = document.createElement("div");
       empty.className = "col-empty";
@@ -293,21 +261,173 @@ function render() {
   }
 }
 
-function renderDropLine(cards, cardEls, index) {
-  removeDropLine(cards);
-  const line = document.createElement("div");
+// ── Pointer drag engine ───────────────────────────────────────
+
+function computeDropFromPoint(x, y, skipId) {
+  const el = document.elementFromPoint(x, y);
+  if (!el) return null;
+  const colEl = el.closest(".column");
+  if (!colEl) return null;
+  const colId = colEl.dataset.colId;
+  const body  = colEl.querySelector(".col-cards");
+  if (!body) return { colId, index: 0, beforeId: null };
+  const cardEls = [...body.querySelectorAll(".card")].filter((c) => c.dataset.id !== skipId);
+  let index = cardEls.length;
+  let beforeId = null;
+  for (let i = 0; i < cardEls.length; i++) {
+    const r = cardEls[i].getBoundingClientRect();
+    if (y < r.top + r.height / 2) { index = i; beforeId = cardEls[i].dataset.id; break; }
+  }
+  return { colId, index, beforeId };
+}
+
+function updateDropVisuals(info) {
+  // clear all highlights and drop lines
+  document.querySelectorAll(".column.drag-over").forEach((c) => c.classList.remove("drag-over"));
+  document.querySelectorAll(".drop-line").forEach((l) => l.remove());
+  if (!info) return;
+
+  const colEl = document.querySelector(`.column[data-col-id="${info.colId}"]`);
+  if (!colEl) return;
+  colEl.classList.add("drag-over");
+
+  const body     = colEl.querySelector(".col-cards");
+  const cardEls  = [...body.querySelectorAll(".card")].filter((c) => c.dataset.id !== dragId);
+  const line     = document.createElement("div");
   line.className = "drop-line";
-  line.id = "__drop-line";
-  if (index >= cardEls.length) {
-    cards.appendChild(line);
+  if (info.index >= cardEls.length) {
+    body.appendChild(line);
   } else {
-    cards.insertBefore(line, cardEls[index]);
+    body.insertBefore(line, cardEls[info.index]);
   }
 }
 
-function removeDropLine(cards) {
-  const line = cards.querySelector("#__drop-line");
-  if (line) line.remove();
+function tickAutoScroll() {
+  const s = autoScroll;
+  const boardScroll = document.querySelector(".board-scroll");
+  if (boardScroll && s.vx) boardScroll.scrollLeft += s.vx;
+  if (s.colBody && s.vy) s.colBody.scrollTop += s.vy;
+  if (s.vx || s.vy) {
+    const d = computeDropFromPoint(s.x, s.y, dragId);
+    if (d) { dropInfo = d; updateDropVisuals(d); }
+    rafId = requestAnimationFrame(tickAutoScroll);
+  } else { rafId = 0; }
+}
+
+function updateAutoScroll(x, y) {
+  const boardScroll = document.querySelector(".board-scroll");
+  let vx = 0;
+  if (boardScroll) {
+    const r = boardScroll.getBoundingClientRect(), edge = 64;
+    if (x < r.left + edge) vx = -Math.ceil((r.left + edge - x) / 5);
+    else if (x > r.right - edge) vx = Math.ceil((x - (r.right - edge)) / 5);
+  }
+  let colBody = null, vy = 0;
+  const el = document.elementFromPoint(x, y);
+  const cb = el && el.closest(".col-cards");
+  if (cb) {
+    const r = cb.getBoundingClientRect(), edge = 52;
+    if (y < r.top + edge) vy = -Math.ceil((r.top + edge - y) / 4);
+    else if (y > r.bottom - edge) vy = Math.ceil((y - (r.bottom - edge)) / 4);
+    colBody = cb;
+  }
+  autoScroll = { vx, vy, colBody, x, y };
+  if ((vx || vy) && !rafId) rafId = requestAnimationFrame(tickAutoScroll);
+}
+
+function stopAutoScroll() {
+  if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
+  autoScroll = { vx: 0, vy: 0, colBody: null, x: 0, y: 0 };
+}
+
+function createGhost(cardId, x, y, offX, offY, w) {
+  if (ghostEl) ghostEl.remove();
+  const srcEl = document.querySelector(`.card[data-id="${cardId}"]`);
+  if (!srcEl) return;
+  ghostEl = document.createElement("div");
+  ghostEl.className = "drag-ghost";
+  ghostEl.style.width = w + "px";
+  ghostEl.innerHTML = srcEl.outerHTML;
+  ghostEl.style.left = (x - offX) + "px";
+  ghostEl.style.top  = (y - offY) + "px";
+  document.body.appendChild(ghostEl);
+}
+
+function moveGhost(x, y) {
+  if (!ghostEl || !dragState) return;
+  ghostEl.style.left = (x - dragState.offX) + "px";
+  ghostEl.style.top  = (y - dragState.offY) + "px";
+}
+
+function removeGhost() {
+  if (ghostEl) { ghostEl.remove(); ghostEl = null; }
+}
+
+function onPointerMove(e) {
+  const d = dragState;
+  if (!d) return;
+  const dx = e.clientX - d.startX, dy = e.clientY - d.startY;
+  if (!d.started) {
+    if (Math.hypot(dx, dy) < d.threshold) return;
+    d.started = true;
+    dragId = d.id;
+    document.body.classList.add("dragging-active");
+    createGhost(d.id, e.clientX, e.clientY, d.offX, d.offY, d.w);
+    render(); // re-render to show .dragging class
+  }
+  e.preventDefault();
+  moveGhost(e.clientX, e.clientY);
+  const info = computeDropFromPoint(e.clientX, e.clientY, d.id);
+  dropInfo = info;
+  updateDropVisuals(info);
+  updateAutoScroll(e.clientX, e.clientY);
+}
+
+async function onPointerUp() {
+  window.removeEventListener("pointermove", onPointerMove);
+  window.removeEventListener("pointerup", onPointerUp);
+  window.removeEventListener("pointercancel", onPointerUp);
+  stopAutoScroll();
+  document.body.classList.remove("dragging-active");
+  removeGhost();
+
+  const d = dragState;
+  const info = dropInfo;
+  dragState = null;
+  dragId = null;
+  dropInfo = null;
+  updateDropVisuals(null);
+
+  if (d && d.started) {
+    justDragged = true;
+    clearTimeout(justDraggedTimer);
+    justDraggedTimer = setTimeout(() => { justDragged = false; }, 320);
+    if (info && info.beforeId !== d.id) {
+      try { await moveCard(d.id, info.colId, info.beforeId); }
+      catch (err) { console.error(err); render(); }
+    } else {
+      render();
+    }
+  }
+}
+
+function beginDrag(e, cardId, fromGrip) {
+  if (e.pointerType === "mouse" && e.button !== 0) return;
+  if (!fromGrip && e.pointerType !== "mouse") return; // touch must use the grip
+  const cardEl = e.currentTarget.closest(".card");
+  if (!cardEl) return;
+  e.preventDefault();
+  const rect = cardEl.getBoundingClientRect();
+  dragState = {
+    id: cardId, started: false,
+    startX: e.clientX, startY: e.clientY,
+    offX: e.clientX - rect.left, offY: e.clientY - rect.top,
+    w: rect.width,
+    threshold: fromGrip ? 3 : 6,
+  };
+  window.addEventListener("pointermove", onPointerMove, { passive: false });
+  window.addEventListener("pointerup", onPointerUp);
+  window.addEventListener("pointercancel", onPointerUp);
 }
 
 // ── CRUD ──────────────────────────────────────────────────────

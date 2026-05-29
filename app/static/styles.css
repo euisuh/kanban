@@ -300,16 +300,48 @@ button, input, select, textarea { font: inherit; }
   border-radius: var(--card-radius);
   box-shadow: var(--card-shadow);
   padding: var(--card-pad);
-  cursor: grab; position: relative;
-  display: flex; flex-direction: column; gap: 9px;
+  cursor: pointer; position: relative;
+  display: flex; align-items: stretch; gap: 4px;
   transition: box-shadow .15s, transform .12s, opacity .15s, border-color .15s;
 }
 .card:hover {
   box-shadow: var(--card-shadow-hover);
   border-color: color-mix(in srgb, var(--accent) 35%, var(--card-border));
 }
-.card:active { cursor: grabbing; }
-.card.dragging { opacity: .4; }
+.card.dragging { opacity: .35; }
+
+/* drag grip */
+.card-grip {
+  appearance: none; border: 0; background: transparent; padding: 0;
+  width: 22px; flex-shrink: 0; align-self: stretch; min-height: 38px;
+  display: grid; place-items: center; cursor: grab;
+  color: var(--ink-faint); border-radius: 7px; margin: -2px 0 -2px -4px;
+  touch-action: none; transition: color .14s, background .14s, opacity .14s;
+}
+.card-grip svg { width: 16px; height: 16px; }
+.card-grip:hover { color: var(--ink); background: var(--chip-bg); }
+.card-grip:active { cursor: grabbing; }
+@media (hover: hover) {
+  .card-grip { opacity: 0; }
+  .card:hover .card-grip { opacity: 1; }
+}
+@media (pointer: coarse) {
+  .card-grip { opacity: 1; }
+}
+
+.card-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 9px; }
+
+/* drag ghost — fixed clone that follows pointer */
+.drag-ghost {
+  position: fixed; z-index: 1500; pointer-events: none;
+  transform: rotate(1.4deg) scale(1.02); will-change: left, top;
+}
+.drag-ghost .card {
+  box-shadow: 0 18px 42px rgba(16, 36, 56, 0.30);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--card-border));
+}
+body.dragging-active { cursor: grabbing; }
+body.dragging-active * { user-select: none !important; -webkit-user-select: none !important; }
 
 .card-top { display: flex; align-items: flex-start; gap: 9px; }
 .card .title {
@@ -552,3 +584,49 @@ button, input, select, textarea { font: inherit; }
 
 /* ── Empty states ── */
 .empty-board { margin: auto; text-align: center; color: var(--ink-faint); padding: 60px; }
+
+/* ============================================================
+   MOBILE (≤760px) — swipeable column pager + bottom sheet
+   ============================================================ */
+@media (max-width: 760px) {
+  .topbar { flex-wrap: wrap; gap: 10px 12px; padding: 11px 14px; }
+  .brand { order: 1; }
+  .topbar .icon-btn { order: 2; margin-left: auto; }
+  .quickadd { order: 3; flex-basis: 100%; max-width: none; margin: 0; }
+  .quickadd .qa-input { padding: 10px 12px; }
+  .quickadd input { font-size: 16px; } /* prevent iOS zoom-on-focus */
+  .quickadd .qa-enter { display: none; }
+  .qa-preview { font-size: 12px; padding: 9px 11px; }
+
+  .filters { padding: 9px 14px; gap: 12px; }
+  .search { min-width: 140px; }
+
+  .board-scroll {
+    padding: 14px 0 16px;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+  }
+  .board { gap: 12px; padding: 0 14px; }
+  .column {
+    width: min(86vw, 380px); max-width: none;
+    height: 100%;
+    scroll-snap-align: center;
+  }
+
+  .card-grip { width: 26px; min-height: 44px; opacity: 1; }
+  .card .title { font-size: 14.5px; }
+
+  /* bottom-sheet modal */
+  .overlay { place-items: end stretch; padding: 0; }
+  .sheet, .sheet.narrow {
+    max-width: none; width: 100%; max-height: 90vh;
+    border-radius: 18px 18px 0 0; border-bottom: 0;
+    animation: sheetUp .26s cubic-bezier(.3,.85,.35,1);
+  }
+  .sheet-body { gap: 18px; }
+  .row2 { grid-template-columns: 1fr; gap: 16px; }
+  .field input[type="text"], .field textarea { font-size: 16px; }
+
+  .toast { left: 14px; right: 14px; transform: none; bottom: 16px; justify-content: space-between; }
+}
+@keyframes sheetUp { from { transform: translateY(100%); opacity: .6; } }
