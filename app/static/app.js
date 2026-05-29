@@ -1,22 +1,35 @@
-const boardEl = document.querySelector("#board");
-const form = document.querySelector("#card-form");
-const quickAddEl = document.querySelector("#quick-add");
-const searchInput = document.querySelector("#search-input");
-const projectFilter = document.querySelector("#project-filter");
-const priorityFilter = document.querySelector("#priority-filter");
-const columnTemplate = document.querySelector("#column-template");
-const cardTemplate = document.querySelector("#card-template");
-const backdrop = document.querySelector("#modal-backdrop");
-const modal = document.querySelector("#modal");
-const toast = document.querySelector("#toast");
+/* ============================================================
+   Kanban — Triage design system, vanilla JS
+   ============================================================ */
 
-let board = { settings: { background: { type: "none", value: "", fit: "cover" } }, columns: [], cards: [] };
-let draggedId = null;
-let activeCardId = null;
-let toastTimer = null;
-const modalPatchQueues = new Map();
+// ── Design constants ─────────────────────────────────────────
 
-// ── API ────────────────────────────────────────────────────────────
+const PRIORITIES = {
+  1: { short: "P1", name: "Urgent", color: "#e0524d" },
+  2: { short: "P2", name: "High",   color: "#e08a2f" },
+  3: { short: "P3", name: "Medium", color: "#2b93e0" },
+  4: { short: "P4", name: "Low",    color: "#7c8a99" },
+};
+
+const PROJECT_PALETTE = [
+  "#2b93e0", "#8a6cd1", "#2f9268", "#e08a2f",
+  "#e0524d", "#4f7fe0", "#19b0c9", "#9268a0",
+];
+
+const BG_PRESETS = [
+  { id: "sky",  label: "Sky",  css: "linear-gradient(160deg,#dcebfb,#a9d2f2 55%,#6aa9e0)" },
+  { id: "mist", label: "Mist", css: "linear-gradient(160deg,#eef4f9,#cfe0ee 55%,#9fbdd6)" },
+  { id: "dusk", label: "Dusk", css: "linear-gradient(160deg,#d7e3f2,#9fb0d8 55%,#5d6aa0)" },
+  { id: "teal", label: "Teal", css: "linear-gradient(160deg,#d6f0ef,#9ad6d4 55%,#4f9b9a)" },
+];
+
+function projectColor(name) {
+  let h = 0;
+  for (const ch of String(name)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return PROJECT_PALETTE[h % PROJECT_PALETTE.length];
+}
+
+// ── API ───────────────────────────────────────────────────────
 
 async function api(path, options = {}) {
   const res = await fetch(path, {
@@ -31,36 +44,56 @@ async function api(path, options = {}) {
   return res.json();
 }
 
-// ── Sort/filter ────────────────────────────────────────────────────
+// ── State ─────────────────────────────────────────────────────
+
+let board = { settings: { background: { type: "none", value: "", fit: "cover" } }, columns: [], cards: [] };
+let dragId = null;
+let dropInfo = null;   // { colId, beforeId, index }
+let activeCardId = null;
+let toastTimer = null;
+
+// filter state
+let searchQuery = "";
+let projFilter = new Set();
+let priFilter  = new Set();
+
+// background panel draft state
+let bgDraft = { mode: "none", value: "", scrim: 30, uploadDataUrl: "" };
+
+// ── Quick-add parser ──────────────────────────────────────────
 
 function parseQuickAdd(raw) {
   let text = raw;
   let notes = "";
   let project = "";
-  let priority = 4;
+  let priority = 3;
 
   const pipeIdx = text.indexOf("|");
   if (pipeIdx !== -1) {
     notes = text.slice(pipeIdx + 1).trim();
-    text = text.slice(0, pipeIdx).trim();
+    text  = text.slice(0, pipeIdx).trim();
   }
 
-  text = text.replace(/@(\S+)/g, (_, w) => { project = w; return ""; }).trim();
+  text = text.replace(/@(\S+)/g, (_, w) => { project = w.trim(); return ""; }).trim();
   text = text.replace(/\bp([1-4])\b/gi, (_, n) => { priority = parseInt(n, 10); return ""; }).trim();
   text = text.replace(/\s{2,}/g, " ").trim();
 
   return { title: text, notes, project, priority };
 }
 
+// ── Filtering / sorting ───────────────────────────────────────
+
 function cardsFor(columnId) {
-  const query = searchInput.value.trim().toLowerCase();
-  const project = projectFilter.value;
-  const priority = priorityFilter.value;
+  const q = searchQuery.trim().toLowerCase();
   return board.cards
     .filter((c) => c.column === columnId)
-    .filter((c) => !query || [c.title, c.notes, c.project].some((value) => String(value || "").toLowerCase().includes(query)))
-    .filter((c) => !project || c.project === project)
-    .filter((c) => !priority || String(c.priority) === priority)
+    .filter((c) => !projFilter.size || projFilter.has(c.project || ""))
+    .filter((c) => !priFilter.size  || priFilter.has(c.priority))
+    .filter((c) => {
+      if (!q) return true;
+      return [c.title, c.notes, c.project]
+        .some((v) => String(v || "").toLowerCase().includes(q));
+    })
     .sort((a, b) => (a.sortIndex ?? 0) - (b.sortIndex ?? 0) || a.createdAt - b.createdAt);
 }
 
@@ -70,135 +103,214 @@ function allCardsFor(columnId) {
     .sort((a, b) => (a.sortIndex ?? 0) - (b.sortIndex ?? 0) || a.createdAt - b.createdAt);
 }
 
-// ── Render ─────────────────────────────────────────────────────────
+// ── Render ────────────────────────────────────────────────────
 
-function formatDate(ts) {
-  return new Date(ts * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-}
+const boardEl      = document.getElementById("board");
+const columnTpl    = document.getElementById("column-template");
+const cardTpl      = document.getElementById("card-template");
+const searchInput  = document.getElementById("search-input");
+const projGroup    = document.getElementById("proj-filter-group");
+const priGroup     = document.getElementById("pri-filter-group");
+const clearBtn     = document.getElementById("clear-filters");
 
 function formatShortDate(ts) {
   return new Date(ts * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-function esc(str) {
-  return String(str)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+function formatDate(ts) {
+  return new Date(ts * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
-function projectColor(project) {
-  const palette = [
-    ["#e9f5ef", "#1f6d59"],
-    ["#eef1fb", "#4e5fa8"],
-    ["#fff1df", "#9b5a18"],
-    ["#f7eaf1", "#9a3f67"],
-    ["#e8f3f7", "#2d6778"],
-    ["#f1edfb", "#6952a5"],
-  ];
-  let hash = 0;
-  for (const ch of String(project)) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
-  return palette[hash % palette.length];
-}
+function renderProjFilterChips() {
+  // keep the lbl span, remove previous chips
+  const existing = projGroup.querySelectorAll(".fchip");
+  existing.forEach((el) => el.remove());
 
-function cssUrlValue(str) {
-  return String(str)
-    .replace(/[\0-\x1F\x7F]/g, "")
-    .replace(/\\/g, "\\\\")
-    .replace(/"/g, '\\"');
-}
-
-function render() {
-  renderProjectFilter();
-  boardEl.replaceChildren();
-  board.columns.forEach((column) => {
-    const node = columnTemplate.content.firstElementChild.cloneNode(true);
-    const dropzone = node.querySelector(".dropzone");
-    const columnCards = cardsFor(column.id);
-
-    node.querySelector(".dot").style.background = column.accent;
-    node.querySelector("h2").textContent = column.title;
-    node.querySelector(".count").textContent = `${columnCards.length}/${allCardsFor(column.id).length}`;
-    dropzone.dataset.column = column.id;
-
-    dropzone.addEventListener("dragover", (e) => { e.preventDefault(); dropzone.classList.add("dragover"); });
-    dropzone.addEventListener("dragleave", () => dropzone.classList.remove("dragover"));
-    dropzone.addEventListener("drop", async (e) => {
-      e.preventDefault();
-      dropzone.classList.remove("dragover");
-      if (!draggedId) return;
-      try {
-        await moveCard(draggedId, column.id, e.target.closest(".card")?.dataset.id || null);
-      } catch (err) {
-        console.error("Failed to move card:", err);
-      }
+  const projects = [...new Set(board.cards.map((c) => c.project).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  for (const name of projects) {
+    const color = projectColor(name);
+    const btn = document.createElement("button");
+    btn.className = "fchip";
+    btn.type = "button";
+    btn.dataset.on = projFilter.has(name) ? "1" : "0";
+    btn.style.setProperty("--chip-color", color);
+    btn.innerHTML = `<i class="swatch" style="background:${color}"></i>${esc(name)}`;
+    btn.addEventListener("click", () => {
+      projFilter.has(name) ? projFilter.delete(name) : projFilter.add(name);
+      render();
     });
-
-    columnCards.forEach((card) => dropzone.appendChild(renderCard(card)));
-    if (columnCards.length === 0) {
-      const empty = document.createElement("div");
-      empty.className = "empty-column";
-      empty.textContent = "No cards";
-      dropzone.appendChild(empty);
-    }
-    boardEl.appendChild(node);
-  });
+    projGroup.appendChild(btn);
+  }
 }
 
-function renderProjectFilter() {
-  const current = projectFilter.value;
-  const projects = [...new Set(board.cards.map((card) => card.project).filter(Boolean))].sort((a, b) => a.localeCompare(b));
-  projectFilter.replaceChildren(new Option("All projects", ""));
-  projects.forEach((project) => projectFilter.appendChild(new Option(project, project)));
-  projectFilter.value = projects.includes(current) ? current : "";
+function renderPriFilterChips() {
+  const existing = priGroup.querySelectorAll(".fchip");
+  existing.forEach((el) => el.remove());
+
+  for (const [num, p] of Object.entries(PRIORITIES)) {
+    const pri = parseInt(num, 10);
+    const btn = document.createElement("button");
+    btn.className = "fchip";
+    btn.type = "button";
+    btn.dataset.on = priFilter.has(pri) ? "1" : "0";
+    btn.style.setProperty("--chip-color", p.color);
+    btn.innerHTML = `<i class="swatch" style="background:${p.color};border-radius:50%"></i>${p.short}`;
+    btn.addEventListener("click", () => {
+      priFilter.has(pri) ? priFilter.delete(pri) : priFilter.add(pri);
+      render();
+    });
+    priGroup.appendChild(btn);
+  }
 }
 
 function renderCard(card) {
-  const node = cardTemplate.content.firstElementChild.cloneNode(true);
-  const badge = node.querySelector(".priority-badge");
-  const chip = node.querySelector(".project-chip");
-  const titleEl = node.querySelector(".card-title");
-  const notesEl = node.querySelector(".card-notes");
-  const dateEl = node.querySelector(".card-date");
-  const del = node.querySelector(".delete");
+  const node = cardTpl.content.firstElementChild.cloneNode(true);
+  const col = board.columns.find((c) => c.id === card.column);
+  const pri = PRIORITIES[card.priority] || PRIORITIES[4];
+  const projColor = card.project ? projectColor(card.project) : "#7c8a99";
 
   node.dataset.id = card.id;
-  node.dataset.priority = card.priority;
-  badge.textContent = `p${card.priority}`;
-  badge.className = `priority-badge priority-${card.priority}`;
+  node.style.setProperty("--pri-color", pri.color);
+  node.style.setProperty("--proj-color", projColor);
+  node.style.setProperty("--st-color", col ? col.accent : "#7c8a99");
 
-  if (card.project) {
-    chip.textContent = card.project;
-    const [bg, fg] = projectColor(card.project);
-    chip.style.background = bg;
-    chip.style.color = fg;
-    chip.style.display = "";
+  node.querySelector(".title").textContent = card.title;
+
+  // status pill
+  const sname = node.querySelector(".sname");
+  sname.textContent = col ? col.title : "";
+
+  // desc / notes
+  const descEl = node.querySelector(".desc");
+  if (card.notes && card.notes.trim()) {
+    descEl.textContent = card.notes;
   } else {
-    chip.style.display = "none";
-    chip.style.removeProperty("background");
-    chip.style.removeProperty("color");
+    descEl.remove();
   }
 
-  titleEl.textContent = card.title;
-  notesEl.textContent = card.notes;
-  if (!card.notes) notesEl.style.display = "none";
-  dateEl.textContent = `Updated ${formatShortDate(card.updatedAt || card.createdAt)}`;
+  // project chip
+  node.querySelector(".pname").textContent = card.project || "—";
 
-  node.addEventListener("dragstart", () => { draggedId = card.id; node.classList.add("dragging"); });
-  node.addEventListener("dragend", () => { draggedId = null; node.classList.remove("dragging"); });
+  // priority
+  node.querySelector(".pshort").textContent = pri.short;
 
-  node.addEventListener("click", (e) => {
-    if (e.target.closest(".delete")) return;
-    openModal(card.id);
+  // drag
+  node.addEventListener("dragstart", (e) => {
+    dragId = card.id;
+    node.classList.add("dragging");
+    e.dataTransfer.effectAllowed = "move";
+    try { e.dataTransfer.setData("text/plain", card.id); } catch (_) {}
+  });
+  node.addEventListener("dragend", () => {
+    dragId = null;
+    dropInfo = null;
+    node.classList.remove("dragging");
+    render();
   });
 
-  del.addEventListener("click", (e) => { e.stopPropagation(); deleteCard(card.id); });
+  node.addEventListener("click", () => openModal(card.id));
 
   return node;
 }
 
-// ── CRUD ───────────────────────────────────────────────────────────
+function render() {
+  renderProjFilterChips();
+  renderPriFilterChips();
+
+  const anyFilter = projFilter.size || priFilter.size || searchQuery.trim();
+  clearBtn.hidden = !anyFilter;
+
+  boardEl.replaceChildren();
+
+  for (const col of board.columns) {
+    const colNode = columnTpl.content.firstElementChild.cloneNode(true);
+    const tag   = colNode.querySelector(".tag");
+    const nameEl = colNode.querySelector(".name");
+    const countEl = colNode.querySelector(".count");
+    const cards  = colNode.querySelector(".col-cards");
+
+    tag.style.background = col.accent || "#7c8a99";
+    nameEl.textContent  = col.title;
+
+    const visible = cardsFor(col.id);
+    const total   = allCardsFor(col.id).length;
+    countEl.textContent = anyFilter ? `${visible.length}/${total}` : total;
+
+    colNode.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      colNode.classList.add("drag-over");
+
+      // compute drop index from cursor Y
+      const cardEls = [...cards.querySelectorAll(".card:not(.dragging)")];
+      let index = cardEls.length;
+      let beforeId = null;
+      for (let i = 0; i < cardEls.length; i++) {
+        const r = cardEls[i].getBoundingClientRect();
+        if (e.clientY < r.top + r.height / 2) {
+          index = i;
+          beforeId = cardEls[i].dataset.id;
+          break;
+        }
+      }
+      dropInfo = { colId: col.id, index, beforeId };
+      renderDropLine(cards, cardEls, index);
+    });
+
+    colNode.addEventListener("dragleave", (e) => {
+      if (!colNode.contains(e.relatedTarget)) {
+        colNode.classList.remove("drag-over");
+        dropInfo = null;
+        removeDropLine(cards);
+      }
+    });
+
+    colNode.addEventListener("drop", async (e) => {
+      e.preventDefault();
+      colNode.classList.remove("drag-over");
+      removeDropLine(cards);
+      const id = dragId || e.dataTransfer.getData("text/plain");
+      if (!id) return;
+      const info = dropInfo && dropInfo.colId === col.id ? dropInfo : { colId: col.id, index: total, beforeId: null };
+      dropInfo = null;
+      dragId = null;
+      try { await moveCard(id, col.id, info.beforeId); } catch (err) { console.error(err); }
+    });
+
+    // render cards with optional empty state
+    if (visible.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "col-empty";
+      empty.textContent = anyFilter ? "No matching cards" : "Drag cards here";
+      cards.appendChild(empty);
+    } else {
+      for (const card of visible) {
+        cards.appendChild(renderCard(card));
+      }
+    }
+
+    boardEl.appendChild(colNode);
+  }
+}
+
+function renderDropLine(cards, cardEls, index) {
+  removeDropLine(cards);
+  const line = document.createElement("div");
+  line.className = "drop-line";
+  line.id = "__drop-line";
+  if (index >= cardEls.length) {
+    cards.appendChild(line);
+  } else {
+    cards.insertBefore(line, cardEls[index]);
+  }
+}
+
+function removeDropLine(cards) {
+  const line = cards.querySelector("#__drop-line");
+  if (line) line.remove();
+}
+
+// ── CRUD ──────────────────────────────────────────────────────
 
 async function updateCard(id, patch, shouldRender = true) {
   const updated = await api(`/api/cards/${encodeURIComponent(id)}`, {
@@ -220,318 +332,538 @@ async function deleteCard(id) {
   showUndo(removed);
 }
 
-async function moveCard(id, columnId, beforeId) {
+async function moveCard(id, colId, beforeId) {
   if (beforeId === id) return;
-  const card = board.cards.find((item) => item.id === id);
+  const card = board.cards.find((c) => c.id === id);
   if (!card) return;
 
-  const ordered = allCardsFor(columnId).filter((item) => item.id !== id);
-  const insertAt = beforeId ? ordered.findIndex((item) => item.id === beforeId) : -1;
-  card.column = columnId;
+  const ordered = allCardsFor(colId).filter((c) => c.id !== id);
+  const insertAt = beforeId ? ordered.findIndex((c) => c.id === beforeId) : -1;
+  card.column = colId;
   ordered.splice(insertAt >= 0 ? insertAt : ordered.length, 0, card);
-  ordered.forEach((item, index) => { item.sortIndex = index; });
+  ordered.forEach((c, i) => { c.sortIndex = i; });
   render();
 
-  await Promise.all(ordered.map((item) => updateCard(item.id, { column: item.column, sortIndex: item.sortIndex }, false)));
+  await Promise.all(ordered.map((c) =>
+    updateCard(c.id, { column: c.column, sortIndex: c.sortIndex }, false)
+  ));
   render();
 }
 
+// ── Toast ─────────────────────────────────────────────────────
+
+const toastEl = document.getElementById("toast");
+
 function showUndo(card) {
   if (toastTimer) clearTimeout(toastTimer);
-  toast.replaceChildren();
+  toastEl.replaceChildren();
   const label = document.createElement("span");
   label.textContent = "Card deleted";
-  const undo = document.createElement("button");
-  undo.type = "button";
-  undo.textContent = "Undo";
-  undo.addEventListener("click", async () => {
+  const undoBtn = document.createElement("button");
+  undoBtn.type = "button";
+  undoBtn.textContent = "Undo";
+  undoBtn.addEventListener("click", async () => {
     if (toastTimer) clearTimeout(toastTimer);
-    toast.classList.remove("open");
+    toastEl.hidden = true;
     const restored = await api("/api/cards", {
       method: "POST",
       body: JSON.stringify({
-        title: card.title,
-        notes: card.notes || "",
-        project: card.project || "",
+        title:    card.title,
+        notes:    card.notes || "",
+        project:  card.project || "",
         priority: card.priority,
-        column: card.column,
+        column:   card.column,
       }),
     });
     const withOrder = await updateCard(restored.id, { sortIndex: card.sortIndex ?? 0 }, false);
     board.cards.push(withOrder);
     render();
   });
-  toast.append(label, undo);
-  toast.classList.add("open");
-  toastTimer = setTimeout(() => toast.classList.remove("open"), 6000);
+  toastEl.append(label, undoBtn);
+  toastEl.hidden = false;
+  toastTimer = setTimeout(() => { toastEl.hidden = true; }, 5000);
 }
 
-// ── Modal ──────────────────────────────────────────────────────────
+function showToast(msg) {
+  if (toastTimer) clearTimeout(toastTimer);
+  toastEl.replaceChildren();
+  toastEl.append(document.createTextNode(msg));
+  toastEl.hidden = false;
+  toastTimer = setTimeout(() => { toastEl.hidden = true; }, 2200);
+}
+
+// ── Modal ─────────────────────────────────────────────────────
+
+const modalOverlay  = document.getElementById("modal-overlay");
+const modalStatus   = document.getElementById("modal-status-badge");
+const modalTitle    = document.getElementById("modal-title");
+const modalNotes    = document.getElementById("modal-notes");
+const modalProjChoose = document.getElementById("modal-proj-choose");
+const modalPriChoose  = document.getElementById("modal-pri-choose");
+const modalClose    = document.getElementById("modal-close");
+const modalCancel   = document.getElementById("modal-cancel");
+const modalSave     = document.getElementById("modal-save");
+const modalDelete   = document.getElementById("modal-delete");
+
+let modalDraft = null;
 
 function openModal(cardId) {
   const card = board.cards.find((c) => c.id === cardId);
   if (!card) return;
   activeCardId = cardId;
+  modalDraft = { ...card };
 
-  document.querySelector("#modal-title").value = card.title;
-  document.querySelector("#modal-notes").value = card.notes;
-  document.querySelector("#modal-project").value = card.project || "";
-  document.querySelector("#modal-priority-badge").textContent = `P${card.priority}`;
-  document.querySelector("#modal-priority-badge").className = `priority-badge priority-${card.priority}`;
-  document.querySelector("#modal-project-chip").textContent = card.project || "";
-  document.querySelector("#modal-project-chip").style.display = card.project ? "" : "none";
-  document.querySelector("#modal-date").textContent = `Created ${formatDate(card.createdAt)} · Updated ${formatDate(card.updatedAt || card.createdAt)}`;
+  const col = board.columns.find((c) => c.id === card.column);
+  modalStatus.style.setProperty("--st-color", col ? col.accent : "#7c8a99");
+  modalStatus.innerHTML = `<i class="sdot"></i>${esc(col ? col.title : card.column)}`;
 
-  // Priority buttons
-  document.querySelectorAll(".priority-btn").forEach((btn) => {
-    btn.classList.toggle("active", parseInt(btn.dataset.p) === card.priority);
-  });
+  modalTitle.value = card.title;
+  modalNotes.value  = card.notes || "";
 
-  // Column select
-  const sel = document.querySelector("#modal-column");
-  sel.innerHTML = board.columns
-    .map((col) => `<option value="${esc(col.id)}"${col.id === card.column ? " selected" : ""}>${esc(col.title)}</option>`)
-    .join("");
+  // project chips
+  const projects = [...new Set(board.cards.map((c) => c.project).filter(Boolean))].sort();
+  if (card.project && !projects.includes(card.project)) projects.unshift(card.project);
 
-  backdrop.classList.add("open");
-  document.querySelector("#modal-title").focus();
+  modalProjChoose.replaceChildren();
+  for (const name of projects) {
+    const color = projectColor(name);
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.dataset.on = (modalDraft.project === name) ? "1" : "0";
+    btn.style.setProperty("--ch-color", color);
+    btn.innerHTML = `<i class="swatch" style="background:${color}"></i>${esc(name)}`;
+    btn.addEventListener("click", () => {
+      modalDraft.project = name;
+      modalProjChoose.querySelectorAll("button").forEach((b) => {
+        b.dataset.on = b === btn ? "1" : "0";
+      });
+    });
+    modalProjChoose.appendChild(btn);
+  }
+
+  // priority chips
+  modalPriChoose.replaceChildren();
+  for (const [num, p] of Object.entries(PRIORITIES)) {
+    const pri = parseInt(num, 10);
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.dataset.on = (modalDraft.priority === pri) ? "1" : "0";
+    btn.style.setProperty("--ch-color", p.color);
+    btn.innerHTML = `<i class="swatch" style="background:${p.color};border-radius:50%"></i>${p.short} <small style="opacity:.6;font-size:10px">${p.name}</small>`;
+    btn.addEventListener("click", () => {
+      modalDraft.priority = pri;
+      modalPriChoose.querySelectorAll("button").forEach((b) => {
+        b.dataset.on = b === btn ? "1" : "0";
+      });
+    });
+    modalPriChoose.appendChild(btn);
+  }
+
+  modalOverlay.hidden = false;
+  modalTitle.focus();
 }
 
 function closeModal() {
-  backdrop.classList.remove("open");
+  modalOverlay.hidden = true;
   activeCardId = null;
+  modalDraft = null;
 }
 
-function modalSave(patch) {
-  const cardId = activeCardId;
-  if (!cardId) return;
-  const previous = modalPatchQueues.get(cardId) || Promise.resolve();
-  const next = previous
-    .catch(() => {})
-    .then(() => updateCard(cardId, patch));
-  modalPatchQueues.set(cardId, next);
-  next
-    .catch((err) => console.error("Failed to save card:", err))
-    .finally(() => {
-      if (modalPatchQueues.get(cardId) === next) modalPatchQueues.delete(cardId);
+async function saveModal() {
+  if (!modalDraft || !activeCardId) return;
+  const title = modalTitle.value.trim() || "Untitled";
+  const notes = modalNotes.value;
+  try {
+    await updateCard(activeCardId, {
+      title,
+      notes,
+      project:  modalDraft.project || "",
+      priority: modalDraft.priority,
     });
+    closeModal();
+  } catch (err) {
+    console.error("Failed to save card:", err);
+  }
 }
 
-// Modal event wiring
-document.querySelector("#modal-close").addEventListener("click", closeModal);
-backdrop.addEventListener("click", (e) => { if (e.target === backdrop) closeModal(); });
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
-
-document.querySelector("#modal-title").addEventListener("blur", (e) => {
-  if (e.target.value.trim()) modalSave({ title: e.target.value.trim() });
+modalClose.addEventListener("click", closeModal);
+modalCancel.addEventListener("click", closeModal);
+modalSave.addEventListener("click", saveModal);
+modalDelete.addEventListener("click", async () => {
+  if (!activeCardId) return;
+  const id = activeCardId;
+  closeModal();
+  await deleteCard(id);
+});
+modalOverlay.addEventListener("mousedown", (e) => {
+  if (e.target === modalOverlay) closeModal();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    if (!modalOverlay.hidden) closeModal();
+    if (!bgOverlay.hidden) closeBgPanel();
+  }
 });
 
-document.querySelector("#modal-notes").addEventListener("blur", (e) => {
-  modalSave({ notes: e.target.value });
+// ── Background panel ──────────────────────────────────────────
+
+const bgOverlay   = document.getElementById("bg-overlay");
+const bgBody      = document.getElementById("bg-body");
+const bgClose     = document.getElementById("bg-close");
+const bgCancel    = document.getElementById("bg-cancel");
+const bgApply     = document.getElementById("bg-apply");
+const bgFileInput = document.getElementById("bg-file-input");
+const bgToggleBtn = document.getElementById("bg-toggle");
+
+function applyBg(settings) {
+  const { type, value, fit } = settings.background || {};
+  const layer = document.getElementById("bg-layer");
+  if (!layer) return;
+
+  if (type === "none" || !value) {
+    layer.dataset.on = "0";
+    layer.style.background = "";
+    return;
+  }
+
+  let css = "";
+  if (type === "url" || type === "upload") css = `url("${cssUrl(value)}")`;
+  else if (type === "preset") {
+    const preset = BG_PRESETS.find((p) => p.id === value);
+    if (preset) css = preset.css;
+  }
+
+  if (css) {
+    layer.style.background = css;
+    layer.style.backgroundSize = type === "preset" ? "cover" : (fit === "contain" ? "contain" : fit === "center" ? "auto" : "cover");
+    layer.style.backgroundPosition = "center";
+    layer.dataset.on = "1";
+  }
+}
+
+function renderBgPanel() {
+  bgBody.replaceChildren();
+
+  // mode buttons
+  const modes = [
+    { id: "none",   label: "None",   icon: '<path d="M5 5 15 15M15 5 5 15" /><circle cx="10" cy="10" r="7.5"/>' },
+    { id: "preset", label: "Preset", icon: '<rect x="3" y="4" width="14" height="12" rx="2"/><circle cx="7.5" cy="8.5" r="1.5"/><path d="m4 14 4-3.5 4 3 3-2.5 3 2.5"/>' },
+    { id: "url",    label: "URL",    icon: '<path d="M8 12a3 3 0 0 0 4.2 0l2.3-2.3a3 3 0 0 0-4.2-4.2L11 6"/><path d="M12 8a3 3 0 0 0-4.2 0L5.5 10.3a3 3 0 0 0 4.2 4.2L11 13"/>' },
+    { id: "upload", label: "Upload", icon: '<path d="M10 13V4M6.5 7.5 10 4l3.5 3.5"/><path d="M4 13v2.5a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V13"/>' },
+  ];
+
+  const modesDiv = document.createElement("div");
+  modesDiv.className = "bg-modes";
+
+  for (const m of modes) {
+    const btn = document.createElement("button");
+    btn.className = "bg-mode";
+    btn.type = "button";
+    btn.dataset.on = bgDraft.mode === m.id ? "1" : "0";
+    btn.innerHTML = `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${m.icon}</svg>${m.label}`;
+    btn.addEventListener("click", () => {
+      bgDraft.mode = m.id;
+      if (m.id === "upload") bgFileInput.click();
+      renderBgPanel();
+    });
+    modesDiv.appendChild(btn);
+  }
+  bgBody.appendChild(modesDiv);
+
+  // mode-specific content
+  if (bgDraft.mode === "preset") {
+    const field = document.createElement("div");
+    field.className = "field";
+    const lbl = document.createElement("label");
+    lbl.textContent = "Choose a preset";
+    const grid = document.createElement("div");
+    grid.className = "bg-presets";
+    for (const p of BG_PRESETS) {
+      const btn = document.createElement("button");
+      btn.className = "bg-preset";
+      btn.type = "button";
+      btn.title = p.label;
+      btn.dataset.on = bgDraft.value === p.id ? "1" : "0";
+      btn.style.background = p.css;
+      btn.addEventListener("click", () => {
+        bgDraft.value = p.id;
+        grid.querySelectorAll(".bg-preset").forEach((b) => {
+          b.dataset.on = b === btn ? "1" : "0";
+        });
+      });
+      grid.appendChild(btn);
+    }
+    field.append(lbl, grid);
+    bgBody.appendChild(field);
+  }
+
+  if (bgDraft.mode === "url") {
+    const field = document.createElement("div");
+    field.className = "field";
+    const lbl = document.createElement("label");
+    lbl.textContent = "Image URL";
+    const inp = document.createElement("input");
+    inp.type = "text";
+    inp.value = bgDraft.value || "";
+    inp.placeholder = "https://…/photo.jpg";
+    inp.addEventListener("input", () => { bgDraft.value = inp.value; });
+    field.append(lbl, inp);
+    bgBody.appendChild(field);
+  }
+
+  if (bgDraft.mode === "upload") {
+    const field = document.createElement("div");
+    field.className = "field";
+    const lbl = document.createElement("label");
+    lbl.textContent = "Uploaded image";
+    const dz = document.createElement("div");
+    dz.className = "drop-upload";
+    if (bgDraft.uploadDataUrl) {
+      const img = document.createElement("img");
+      img.src = bgDraft.uploadDataUrl;
+      img.style.cssText = "max-width:100%;max-height:130px;border-radius:8px";
+      dz.appendChild(img);
+    } else {
+      dz.innerHTML = `<svg style="width:22px;height:22px;display:block;margin:0 auto 8px" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13V4M6.5 7.5 10 4l3.5 3.5"/><path d="M4 13v2.5a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V13"/></svg>Drop an image or click to browse`;
+    }
+    dz.addEventListener("click", () => bgFileInput.click());
+    dz.addEventListener("dragover", (e) => { e.preventDefault(); dz.classList.add("over"); });
+    dz.addEventListener("dragleave", () => dz.classList.remove("over"));
+    dz.addEventListener("drop", (e) => { e.preventDefault(); dz.classList.remove("over"); handleBgFile(e.dataTransfer.files[0]); });
+    field.append(lbl, dz);
+    bgBody.appendChild(field);
+  }
+
+  // scrim slider
+  if (bgDraft.mode !== "none") {
+    const field = document.createElement("div");
+    field.className = "field";
+    const lbl = document.createElement("label");
+    lbl.textContent = `Darken for legibility — ${bgDraft.scrim}%`;
+    const row = document.createElement("div");
+    row.className = "scrim-row";
+    const slider = document.createElement("input");
+    slider.type = "range";
+    slider.min = "0"; slider.max = "80"; slider.value = String(bgDraft.scrim);
+    slider.addEventListener("input", () => {
+      bgDraft.scrim = Number(slider.value);
+      lbl.textContent = `Darken for legibility — ${bgDraft.scrim}%`;
+      document.getElementById("bg-layer").style.setProperty("--bg-scrim", `rgba(12,24,36,${bgDraft.scrim / 100})`);
+    });
+    row.appendChild(slider);
+    field.append(lbl, row);
+    bgBody.appendChild(field);
+  }
+}
+
+function handleBgFile(file) {
+  if (!file || !file.type.startsWith("image/")) return;
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    bgDraft.uploadDataUrl = ev.target.result;
+    renderBgPanel();
+  };
+  reader.readAsDataURL(file);
+}
+
+bgFileInput.addEventListener("change", (e) => handleBgFile(e.target.files[0]));
+
+function openBgPanel() {
+  const bg = board.settings?.background || { type: "none", value: "", fit: "cover" };
+  bgDraft = {
+    mode:          bg.type === "image" ? "upload" : bg.type,
+    value:         bg.value || "",
+    scrim:         30,
+    uploadDataUrl: bg.type === "upload" ? bg.value : "",
+  };
+  renderBgPanel();
+  bgOverlay.hidden = false;
+}
+
+function closeBgPanel() {
+  bgOverlay.hidden = true;
+}
+
+async function applyBgPanel() {
+  let type  = bgDraft.mode;
+  let value = bgDraft.value || "";
+  let fit   = "cover";
+
+  if (type === "upload") {
+    if (!bgDraft.uploadDataUrl) { closeBgPanel(); return; }
+    // upload file to server
+    const blob = await fetch(bgDraft.uploadDataUrl).then((r) => r.blob());
+    const fd = new FormData();
+    fd.append("file", blob, "background.jpg");
+    try {
+      const res = await fetch("/api/upload", { method: "POST", body: fd });
+      if (!res.ok) throw new Error("Upload failed");
+      const { path } = await res.json();
+      type = "upload"; value = path;
+    } catch (err) {
+      console.error(err); return;
+    }
+  }
+
+  if (type === "none") value = "";
+
+  try {
+    const settings = await api("/api/board/settings", {
+      method: "PATCH",
+      body: JSON.stringify({ background: { type, value, fit } }),
+    });
+    board.settings = { background: settings.background };
+    applyBg(board.settings);
+    closeBgPanel();
+  } catch (err) {
+    console.error("Failed to apply background:", err);
+  }
+}
+
+bgToggleBtn.addEventListener("click", openBgPanel);
+bgClose.addEventListener("click", closeBgPanel);
+bgCancel.addEventListener("click", closeBgPanel);
+bgApply.addEventListener("click", applyBgPanel);
+bgOverlay.addEventListener("mousedown", (e) => {
+  if (e.target === bgOverlay) closeBgPanel();
 });
 
-document.querySelector("#modal-project").addEventListener("blur", (e) => {
-  modalSave({ project: e.target.value.trim() });
-  const chip = document.querySelector("#modal-project-chip");
-  chip.textContent = e.target.value.trim();
-  chip.style.display = e.target.value.trim() ? "" : "none";
-});
+// ── Quick-add ─────────────────────────────────────────────────
 
-document.querySelectorAll(".priority-btn").forEach((btn) => {
-  btn.addEventListener("click", () => {
-    const p = parseInt(btn.dataset.p);
-    document.querySelectorAll(".priority-btn").forEach((b) => b.classList.remove("active"));
-    btn.classList.add("active");
-    document.querySelector("#modal-priority-badge").textContent = `P${p}`;
-    document.querySelector("#modal-priority-badge").className = `priority-badge priority-${p}`;
-    modalSave({ priority: p });
-  });
-});
+const cardForm   = document.getElementById("card-form");
+const quickAddEl = document.getElementById("quick-add");
+const qaPreview  = document.getElementById("qa-preview");
 
-document.querySelector("#modal-column").addEventListener("change", (e) => {
-  modalSave({ column: e.target.value });
-});
+function renderQaPreview(raw) {
+  if (!raw.trim()) { qaPreview.classList.add("hidden"); return; }
+  const { title, project, priority, notes } = parseQuickAdd(raw);
+  if (!title) { qaPreview.classList.add("hidden"); return; }
 
-// ── Form submit ────────────────────────────────────────────────────
+  const pri     = PRIORITIES[priority] || PRIORITIES[3];
+  const pColor  = project ? projectColor(project) : "#7c8a99";
 
-form.addEventListener("submit", async (e) => {
+  qaPreview.replaceChildren();
+
+  const lead = document.createElement("span");
+  lead.className = "lead";
+  lead.textContent = "Adds";
+
+  const ttl = document.createElement("span");
+  ttl.className = "ttl";
+  ttl.textContent = title;
+
+  const grow = document.createElement("span");
+  grow.className = "grow";
+
+  const projChip = document.createElement("span");
+  projChip.className = "proj-chip";
+  projChip.style.setProperty("--proj-color", pColor);
+  projChip.innerHTML = `<i class="pj"></i>${esc(project || "(default)")}`;
+
+  const priChip = document.createElement("span");
+  priChip.className = "pri";
+  priChip.style.setProperty("--pri-color", pri.color);
+  priChip.innerHTML = `<i class="pdot"></i>${pri.short}`;
+
+  const to = document.createElement("span");
+  to.className = "to";
+  to.textContent = "→ Backlog";
+
+  qaPreview.append(lead, ttl, grow, projChip, priChip, to);
+  qaPreview.classList.remove("hidden");
+}
+
+quickAddEl.addEventListener("input", () => renderQaPreview(quickAddEl.value));
+
+cardForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   const raw = quickAddEl.value.trim();
   if (!raw) return;
-  const { title, notes, project, priority } = parseQuickAdd(raw);
+  const { title, project, priority, notes } = parseQuickAdd(raw);
   if (!title) return;
+
+  const firstCol = board.columns[0];
   try {
     const card = await api("/api/cards", {
       method: "POST",
-      body: JSON.stringify({ title, notes, project, priority, column: board.columns[0]?.id || "backlog" }),
+      body: JSON.stringify({
+        title,
+        notes: notes || "",
+        project: project || "",
+        priority,
+        column: firstCol?.id || "backlog",
+      }),
     });
     board.cards.push(card);
     quickAddEl.value = "";
-    quickAddEl.focus();
+    qaPreview.classList.add("hidden");
     render();
+    showToast("Added to " + (firstCol?.title || "Backlog"));
   } catch (err) {
     console.error("Failed to add card:", err);
   }
 });
 
-searchInput.addEventListener("input", render);
-projectFilter.addEventListener("change", render);
-priorityFilter.addEventListener("change", render);
+// ── Filters ───────────────────────────────────────────────────
+
+searchInput.addEventListener("input", () => {
+  searchQuery = searchInput.value;
+  render();
+});
+
+clearBtn.addEventListener("click", () => {
+  searchQuery = "";
+  projFilter.clear();
+  priFilter.clear();
+  searchInput.value = "";
+  render();
+});
+
+// ── Theme toggle ──────────────────────────────────────────────
+
+const themeBtn = document.getElementById("theme-toggle");
+themeBtn.addEventListener("click", () => {
+  const html = document.documentElement;
+  html.dataset.theme = html.dataset.theme === "dark" ? "light" : "dark";
+});
+
+// ── Keyboard shortcuts ────────────────────────────────────────
 
 document.addEventListener("keydown", (e) => {
-  if (e.key === "/" && !e.target.closest("input, textarea, select")) {
-    e.preventDefault();
-    searchInput.focus();
-  }
-  if (e.key === "n" && !e.target.closest("input, textarea, select")) quickAddEl.focus();
+  if (e.target.closest("input, textarea, select")) return;
+  if (e.key === "/") { e.preventDefault(); searchInput.focus(); }
+  if (e.key === "n") quickAddEl.focus();
 });
 
-// ── Background ─────────────────────────────────────────────────────
+// ── Utilities ─────────────────────────────────────────────────
 
-function applyBg(settings) {
-  const { type, value, fit } = settings.background || {};
-  if (type === "none" || !value) {
-    document.body.classList.remove("has-bg-image");
-    document.body.style.removeProperty("--board-bg-image");
-    document.body.style.removeProperty("--board-bg-size");
-  } else {
-    const sizeMap = { cover: "cover", contain: "contain", center: "auto" };
-    document.body.style.setProperty("--board-bg-image", `url("${cssUrlValue(value)}")`);
-    document.body.style.setProperty("--board-bg-size", sizeMap[fit] || "cover");
-    document.body.classList.add("has-bg-image");
-  }
+function esc(str) {
+  return String(str)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-// Settings panel toggle
-document.querySelector("#settings-toggle").addEventListener("click", () => {
-  document.querySelector("#settings-panel").classList.toggle("open");
-});
-
-// Tab switching
-document.querySelectorAll(".settings-tab").forEach((tab) => {
-  tab.addEventListener("click", () => {
-    document.querySelectorAll(".settings-tab").forEach((t) => t.classList.remove("active"));
-    document.querySelectorAll(".settings-pane").forEach((p) => p.classList.remove("active"));
-    tab.classList.add("active");
-    document.querySelector(`#pane-${tab.dataset.tab}`).classList.add("active");
-  });
-});
-
-// Fit buttons (both groups)
-document.querySelectorAll(".settings-fit-group").forEach((group) => {
-  group.querySelectorAll(".fit-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      group.querySelectorAll(".fit-btn").forEach((b) => b.classList.remove("active"));
-      btn.classList.add("active");
-    });
-  });
-});
-
-function activeFit(groupId) {
-  return document.querySelector(`#${groupId} .fit-btn.active`)?.dataset.fit || "cover";
+function cssUrl(str) {
+  return String(str)
+    .replace(/[\0-\x1F\x7F]/g, "")
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"');
 }
 
-// File preview
-document.querySelector("#bg-file").addEventListener("change", (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = (ev) => {
-    const img = document.querySelector("#preview-upload");
-    img.src = ev.target.result;
-    img.removeAttribute("hidden");
-    img.classList.add("visible");
-  };
-  reader.readAsDataURL(file);
-});
-
-// URL preview
-document.querySelector("#bg-url").addEventListener("input", (e) => {
-  const img = document.querySelector("#preview-url");
-  if (e.target.value.startsWith("http")) {
-    img.src = e.target.value;
-    img.removeAttribute("hidden");
-    img.classList.add("visible");
-  } else {
-    img.setAttribute("hidden", "");
-    img.classList.remove("visible");
-  }
-});
-
-// Apply upload
-document.querySelector("#apply-upload").addEventListener("click", async () => {
-  const file = document.querySelector("#bg-file").files[0];
-  if (!file) return;
-  const fd = new FormData();
-  fd.append("file", file);
-  let uploadResult;
-  try {
-    const res = await fetch("/api/upload", { method: "POST", body: fd });
-    if (!res.ok) { alert("Upload failed"); return; }
-    uploadResult = await res.json();
-  } catch (err) {
-    alert("Upload failed: " + err.message);
-    return;
-  }
-  const { path } = uploadResult;
-  const fit = activeFit("fit-group-upload");
-  try {
-    const settings = await api("/api/board/settings", {
-      method: "PATCH",
-      body: JSON.stringify({ background: { type: "upload", value: path, fit } }),
-    });
-    board.settings = { background: settings.background };
-    applyBg(board.settings);
-    document.querySelector("#settings-panel").classList.remove("open");
-  } catch (err) {
-    alert("Failed to apply background: " + err.message);
-  }
-});
-
-// Apply URL
-document.querySelector("#apply-url").addEventListener("click", async () => {
-  const value = document.querySelector("#bg-url").value.trim();
-  if (!value.startsWith("http")) { alert("Enter a valid URL starting with http"); return; }
-  const fit = activeFit("fit-group-url");
-  try {
-    const settings = await api("/api/board/settings", {
-      method: "PATCH",
-      body: JSON.stringify({ background: { type: "url", value, fit } }),
-    });
-    board.settings = { background: settings.background };
-    applyBg(board.settings);
-    document.querySelector("#settings-panel").classList.remove("open");
-  } catch (err) {
-    alert("Failed to apply background: " + err.message);
-  }
-});
-
-// Apply none
-document.querySelector("#apply-none").addEventListener("click", async () => {
-  try {
-    const settings = await api("/api/board/settings", {
-      method: "PATCH",
-      body: JSON.stringify({ background: { type: "none", value: "", fit: "cover" } }),
-    });
-    board.settings = { background: settings.background };
-    applyBg(board.settings);
-    document.querySelector("#settings-panel").classList.remove("open");
-  } catch (err) {
-    alert("Failed to apply background: " + err.message);
-  }
-});
-
-// ── Boot ───────────────────────────────────────────────────────────
+// ── Boot ──────────────────────────────────────────────────────
 
 async function boot() {
   board = await api("/api/board");
   if (board.settings) applyBg(board.settings);
+
+  // apply saved theme if stored in board settings (optional extension)
+  // Default is light from html attr
   render();
 }
 
 boot().catch((err) => {
   const p = document.createElement("p");
-  p.style.cssText = "color:red;padding:20px";
+  p.style.cssText = "color:var(--p1);padding:20px";
   p.textContent = err.message;
-  boardEl.appendChild(p);
+  document.getElementById("board").appendChild(p);
 });
