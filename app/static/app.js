@@ -418,6 +418,7 @@ function beginDrag(e, cardId, fromGrip) {
   const cardEl = e.currentTarget.closest(".card");
   if (!cardEl) return;
   e.preventDefault();
+  try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {}
   const rect = cardEl.getBoundingClientRect();
   dragState = {
     id: cardId, started: false,
@@ -626,6 +627,7 @@ modalOverlay.addEventListener("mousedown", (e) => {
 });
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
+    if (dragState) { onPointerUp(); return; } // cancel active drag first
     if (!modalOverlay.hidden) closeModal();
     if (!bgOverlay.hidden) closeBgPanel();
   }
