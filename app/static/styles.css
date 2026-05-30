@@ -591,7 +591,8 @@ body.dragging-active * { user-select: none !important; -webkit-user-select: none
 @media (max-width: 760px) {
   .topbar { flex-wrap: wrap; gap: 10px 12px; padding: 11px 14px; }
   .brand { order: 1; }
-  .topbar .icon-btn { order: 2; margin-left: auto; }
+  #bg-toggle    { order: 2; margin-left: auto; } /* push icon group to right edge */
+  #theme-toggle { order: 2; }
   .quickadd { order: 3; flex-basis: 100%; max-width: none; margin: 0; }
   .quickadd .qa-input { padding: 10px 12px; }
   .quickadd input { font-size: 16px; } /* prevent iOS zoom-on-focus */

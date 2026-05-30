@@ -181,6 +181,7 @@ function renderCard(card) {
   node.style.setProperty("--pri-color", pri.color);
   node.style.setProperty("--proj-color", projColor);
   node.style.setProperty("--st-color", col ? col.accent : "#7c8a99");
+  if (dragId === card.id) node.classList.add("dragging");
 
   node.querySelector(".title").textContent = card.title;
 
