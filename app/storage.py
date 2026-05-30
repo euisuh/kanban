@@ -177,10 +177,14 @@ class BoardStore:
             value = str(bg.get("value", "")).strip()
             if not _valid_background_value(bg_type, value):
                 raise ValueError("background.value must be http(s), /uploads/<hex>.<ext>, or a preset id")
+            raw_scrim = bg.get("scrim", 30)
+            scrim = int(raw_scrim) if isinstance(raw_scrim, (int, float)) and not isinstance(raw_scrim, bool) else 30
+            scrim = max(0, min(80, scrim))
             settings["background"] = {
                 "type": bg_type,
                 "value": value,
                 "fit": fit,
+                "scrim": scrim,
             }
         board["settings"] = settings
         board = self.save(board)
@@ -221,7 +225,10 @@ class BoardStore:
         bg_raw = (board.get("settings") or {}).get("background") or {}
         bg_type = bg_raw.get("type", "none") if bg_raw.get("type") in ("none", "url", "upload", "preset") else "none"
         fit = bg_raw.get("fit", "cover") if bg_raw.get("fit") in ("cover", "contain", "center") else "cover"
-        settings = {"background": {"type": bg_type, "value": str(bg_raw.get("value") or ""), "fit": fit}}
+        raw_scrim = bg_raw.get("scrim", 30)
+        scrim = int(raw_scrim) if isinstance(raw_scrim, (int, float)) and not isinstance(raw_scrim, bool) else 30
+        scrim = max(0, min(80, scrim))
+        settings = {"background": {"type": bg_type, "value": str(bg_raw.get("value") or ""), "fit": fit, "scrim": scrim}}
         return {"settings": settings, "columns": columns, "cards": cards}
 
     def _find_card(self, board: dict[str, Any], card_id: str) -> dict[str, Any]:
