@@ -644,9 +644,13 @@ const bgFileInput = document.getElementById("bg-file-input");
 const bgToggleBtn = document.getElementById("bg-toggle");
 
 function applyBg(settings) {
-  const { type, value, fit } = settings.background || {};
+  const { type, value, fit, scrim } = settings.background || {};
   const layer = document.getElementById("bg-layer");
   if (!layer) return;
+
+  // always restore saved scrim
+  const scrimVal = typeof scrim === "number" ? scrim : 30;
+  layer.style.setProperty("--bg-scrim", `rgba(12,24,36,${scrimVal / 100})`);
 
   if (type === "none" || !value) {
     layer.dataset.on = "0";
@@ -804,11 +808,9 @@ function openBgPanel() {
   const mode = bg.type === "image" ? "upload" : bg.type;
   bgDraft = {
     mode,
-    // only pre-populate value when mode matches — prevents preset ids / upload
-    // paths leaking into the URL input or broken-image in upload preview
     value:         (mode === "url" || mode === "preset") ? (bg.value || "") : "",
-    scrim:         30,
-    uploadDataUrl: "", // never pre-fill with server path — user must re-select
+    scrim:         typeof bg.scrim === "number" ? bg.scrim : 30,
+    uploadDataUrl: "",
   };
   renderBgPanel();
   bgOverlay.hidden = false;
@@ -859,7 +861,7 @@ async function applyBgPanel() {
   try {
     const settings = await api("/api/board/settings", {
       method: "PATCH",
-      body: JSON.stringify({ background: { type, value, fit } }),
+      body: JSON.stringify({ background: { type, value, fit, scrim: bgDraft.scrim } }),
     });
     board.settings = { background: settings.background };
     applyBg(board.settings);
