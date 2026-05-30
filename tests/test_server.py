@@ -32,6 +32,16 @@ def _restore_creds(single: str | None, multi: str | None) -> None:
         os.environ["KANBAN_CREDENTIALS"] = multi
 
 
+def _png_bytes() -> bytes:
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        b"\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+        b"\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx"
+        b"\x9cc\xf8\x0f\x00\x00\x01\x01\x00\x05\x18\xd8N"
+        b"\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
+
+
 def request(port: int, method: str, path: str, body: dict[str, Any] | None = None, auth: str | None = None) -> tuple[int, Any]:
     conn = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
     payload = json.dumps(body).encode("utf-8") if body is not None else None
@@ -236,13 +246,7 @@ def test_upload_valid_image(tmp_path: Path) -> None:
     saved = _clear_creds()
     server, thread, port = _start(tmp_path)
     try:
-        png_bytes = (
-            b"\x89PNG\r\n\x1a\n"
-            b"\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
-            b"\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx"
-            b"\x9cc\xf8\x0f\x00\x00\x01\x01\x00\x05\x18\xd8N"
-            b"\x00\x00\x00\x00IEND\xaeB`\x82"
-        )
+        png_bytes = _png_bytes()
         boundary = b"testboundary"
         body = (
             b"--testboundary\r\n"
@@ -266,6 +270,54 @@ def test_upload_valid_image(tmp_path: Path) -> None:
         assert data["path"].startswith("/uploads/")
         assert data["path"].endswith(".png")
     finally:
+        _restore_creds(*saved)
+        _stop(server, thread)
+
+
+def test_upload_uses_configured_uploads_dir_and_serves_file(tmp_path: Path) -> None:
+    saved = _clear_creds()
+    previous_uploads = os.environ.get("KANBAN_UPLOADS")
+    uploads = tmp_path / "data" / "uploads"
+    os.environ["KANBAN_UPLOADS"] = str(uploads)
+    server, thread, port = _start(tmp_path)
+    try:
+        png_bytes = _png_bytes()
+        body = (
+            b"--testboundary\r\n"
+            b'Content-Disposition: form-data; name="file"; filename="test.png"\r\n'
+            b"Content-Type: image/png\r\n"
+            b"\r\n" + png_bytes + b"\r\n"
+            b"--testboundary--\r\n"
+        )
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+        conn.request(
+            "POST", "/api/upload", body=body,
+            headers={
+                "Content-Type": "multipart/form-data; boundary=testboundary",
+                "Content-Length": str(len(body)),
+            },
+        )
+        res = conn.getresponse()
+        data = json.loads(res.read().decode())
+        conn.close()
+
+        assert res.status == 201
+        filename = Path(data["path"]).name
+        assert (uploads / filename).read_bytes() == png_bytes
+
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+        conn.request("GET", data["path"])
+        res = conn.getresponse()
+        served = res.read()
+        conn.close()
+
+        assert res.status == 200
+        assert served == png_bytes
+    finally:
+        if previous_uploads is None:
+            os.environ.pop("KANBAN_UPLOADS", None)
+        else:
+            os.environ["KANBAN_UPLOADS"] = previous_uploads
         _restore_creds(*saved)
         _stop(server, thread)
 

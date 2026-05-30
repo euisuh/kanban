@@ -7,9 +7,9 @@ services:
       - "127.0.0.1:8097:8080"
     volumes:
       - ./data:/data
-      - ./app/static/uploads:/app/app/static/uploads
     env_file:
       - .env
     environment:
       KANBAN_DATA_ROOT: /data
       KANBAN_DATA: /data/board.json
+      KANBAN_UPLOADS: /data/uploads

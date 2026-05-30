@@ -20,7 +20,7 @@ from .storage import BoardStore
 
 ROOT = Path(__file__).resolve().parent
 STATIC = ROOT / "static"
-UPLOADS = ROOT / "static" / "uploads"
+DEFAULT_UPLOADS = ROOT / "static" / "uploads"
 ALLOWED_UPLOAD_MIME = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
 
@@ -42,6 +42,10 @@ def _is_valid_image_bytes(data: bytes) -> bool:
     if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
         return True  # WEBP
     return False
+
+
+def _uploads_root() -> Path:
+    return Path(os.environ.get("KANBAN_UPLOADS", str(DEFAULT_UPLOADS))).resolve()
 
 
 _USERNAME_RE = re.compile(r'^[A-Za-z0-9_-]{1,64}$')
@@ -216,9 +220,14 @@ class KanbanHandler(BaseHTTPRequestHandler):
             if not _is_valid_image_bytes(file_data):
                 self._json(HTTPStatus.BAD_REQUEST, {"error": "Invalid image file"})
                 return
-            UPLOADS.mkdir(parents=True, exist_ok=True)
+            uploads = _uploads_root()
             filename = uuid.uuid4().hex + ext
-            (UPLOADS / filename).write_bytes(file_data)
+            try:
+                uploads.mkdir(parents=True, exist_ok=True)
+                (uploads / filename).write_bytes(file_data)
+            except OSError:
+                self._json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "Could not save upload"})
+                return
             self._json(HTTPStatus.CREATED, {"path": f"/uploads/{filename}"})
             return
 
@@ -308,8 +317,13 @@ class KanbanHandler(BaseHTTPRequestHandler):
 
     def _static(self, path: str, send_body: bool = True) -> None:
         relative = "index.html" if path in {"", "/"} else path.lstrip("/")
-        target = (STATIC / relative).resolve()
-        if STATIC not in target.parents and target != STATIC:
+        if relative.startswith("uploads/"):
+            root = _uploads_root()
+            target = (root / relative.removeprefix("uploads/")).resolve()
+        else:
+            root = STATIC
+            target = (root / relative).resolve()
+        if root not in target.parents and target != root:
             self.send_error(HTTPStatus.FORBIDDEN)
             return
         if not target.exists() or not target.is_file():
