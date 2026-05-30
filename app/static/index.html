@@ -157,7 +157,7 @@
 
     <!-- Templates -->
     <template id="column-template">
-      <section class="column">
+      <section class="column" data-col-id="">
         <header class="col-head">
           <i class="tag"></i>
           <span class="name"></span>
@@ -169,16 +169,24 @@
     </template>
 
     <template id="card-template">
-      <div class="card" draggable="true">
-        <div class="card-top">
-          <div class="title"></div>
-          <span class="status-pill"><i class="sdot"></i><span class="sname"></span></span>
-        </div>
-        <div class="desc"></div>
-        <div class="card-foot">
-          <span class="proj-chip"><i class="pj"></i><span class="pname"></span></span>
-          <span class="grow" style="flex:1"></span>
-          <span class="pri"><i class="pdot"></i><span class="pshort"></span></span>
+      <div class="card">
+        <button class="card-grip" type="button" aria-label="Drag to move">
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="8" cy="5" r="1.3"/><circle cx="8" cy="10" r="1.3"/><circle cx="8" cy="15" r="1.3"/>
+            <circle cx="12" cy="5" r="1.3"/><circle cx="12" cy="10" r="1.3"/><circle cx="12" cy="15" r="1.3"/>
+          </svg>
+        </button>
+        <div class="card-main">
+          <div class="card-top">
+            <div class="title"></div>
+            <span class="status-pill"><i class="sdot"></i><span class="sname"></span></span>
+          </div>
+          <div class="desc"></div>
+          <div class="card-foot">
+            <span class="proj-chip"><i class="pj"></i><span class="pname"></span></span>
+            <span class="grow" style="flex:1"></span>
+            <span class="pri"><i class="pdot"></i><span class="pshort"></span></span>
+          </div>
         </div>
       </div>
     </template>
