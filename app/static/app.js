@@ -690,6 +690,7 @@ function renderBgPanel() {
     btn.dataset.on = bgDraft.mode === m.id ? "1" : "0";
     btn.innerHTML = `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${m.icon}</svg>${m.label}`;
     btn.addEventListener("click", () => {
+      if (bgDraft.mode !== m.id) bgDraft.value = ""; // clear stale value on mode switch
       bgDraft.mode = m.id;
       renderBgPanel();
     });
@@ -800,11 +801,14 @@ bgFileInput.addEventListener("change", (e) => handleBgFile(e.target.files[0]));
 
 function openBgPanel() {
   const bg = board.settings?.background || { type: "none", value: "", fit: "cover" };
+  const mode = bg.type === "image" ? "upload" : bg.type;
   bgDraft = {
-    mode:          bg.type === "image" ? "upload" : bg.type,
-    value:         bg.value || "",
+    mode,
+    // only pre-populate value when mode matches — prevents preset ids / upload
+    // paths leaking into the URL input or broken-image in upload preview
+    value:         (mode === "url" || mode === "preset") ? (bg.value || "") : "",
     scrim:         30,
-    uploadDataUrl: bg.type === "upload" ? bg.value : "",
+    uploadDataUrl: "", // never pre-fill with server path — user must re-select
   };
   renderBgPanel();
   bgOverlay.hidden = false;
