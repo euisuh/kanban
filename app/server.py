@@ -62,6 +62,7 @@ def _parse_credentials() -> dict[str, str] | None:
     Returns {}    → credentials configured but all malformed → fail closed.
     Returns {...} → valid credentials.
     """
+    demo = _parse_demo_credential()
     raw = os.environ.get("KANBAN_CREDENTIALS", "")
     if raw:
         result: dict[str, str] = {}
@@ -80,6 +81,8 @@ def _parse_credentials() -> dict[str, str] | None:
             if username in result:
                 print(f"WARNING: duplicate username {username!r} in KANBAN_CREDENTIALS, last entry wins")
             result[username] = password
+        if demo:
+            result[demo[0]] = demo[1]
         return result  # may be empty dict → fail closed
     # backward compat: single credential
     single = os.environ.get("KANBAN_CREDENTIAL", "")
@@ -91,8 +94,27 @@ def _parse_credentials() -> dict[str, str] | None:
         if not username or not _USERNAME_RE.match(username):
             print(f"WARNING: invalid username in KANBAN_CREDENTIAL — fail closed")
             return {}
-        return {username: password}
+        credentials = {username: password}
+        if demo:
+            credentials[demo[0]] = demo[1]
+        return credentials
+    if demo:
+        return {demo[0]: demo[1]}
     return None  # no credential vars set → no-auth mode
+
+
+def _parse_demo_credential() -> tuple[str, str] | None:
+    raw = os.environ.get("KANBAN_DEMO_CREDENTIAL", "")
+    if not raw:
+        return None
+    if ":" not in raw:
+        print("WARNING: malformed KANBAN_DEMO_CREDENTIAL (no colon), skipping")
+        return None
+    username, password = raw.split(":", 1)
+    if not username or not _USERNAME_RE.match(username):
+        print("WARNING: invalid username in KANBAN_DEMO_CREDENTIAL, skipping")
+        return None
+    return username, password
 
 
 def _parse_multipart(data: bytes, boundary: bytes) -> tuple[bytes, str, str]:
@@ -119,12 +141,19 @@ def _parse_multipart(data: bytes, boundary: bytes) -> tuple[bytes, str, str]:
     return first_readable_part or (b"", "application/octet-stream", ".bin")
 
 
+def _uses_per_user_store(username: str) -> bool:
+    if os.environ.get("KANBAN_CREDENTIALS", ""):
+        return True
+    demo = _parse_demo_credential()
+    return bool(demo and username == demo[0])
+
+
 class KanbanHandler(BaseHTTPRequestHandler):
     # Override in tests to control where board files land.
     data_root: Path | None = None
 
     def _get_store(self, username: str) -> BoardStore:
-        if username and os.environ.get("KANBAN_CREDENTIALS", ""):
+        if username and _uses_per_user_store(username):
             root = (self.__class__.data_root or Path(
                 os.environ.get("KANBAN_DATA_ROOT", "data")
             )).resolve()

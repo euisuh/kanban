@@ -13,3 +13,4 @@ services:
       KANBAN_DATA_ROOT: /data
       KANBAN_DATA: /data/board.json
       KANBAN_UPLOADS: /data/uploads
+      KANBAN_DEMO_CREDENTIAL: ${KANBAN_DEMO_CREDENTIAL:-demo:demo}

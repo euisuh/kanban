@@ -30,7 +30,10 @@ Credentials live in `.env`:
 
 ```env
 KANBAN_CREDENTIAL=kanban:your-password
+KANBAN_DEMO_CREDENTIAL=demo:demo
 ```
+
+`KANBAN_DEMO_CREDENTIAL` is optional and intentionally non-secret. It gives the public console a demo login while keeping the main `KANBAN_CREDENTIAL` prompt for admin use. Demo data is stored separately under `./data/demo/board.json`.
 
 After changing `.env`, restart the container so it loads the new value:
 
