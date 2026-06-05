@@ -1,15 +1,15 @@
 server {
     listen 443 ssl;
     http2 on;
-    server_name kanban.uiseoya.com;
+    server_name your-domain.com;
 
-    ssl_certificate     /Users/uiseo/.config/kanban/certbot/config/live/kanban.uiseoya.com/fullchain.pem;
-    ssl_certificate_key /Users/uiseo/.config/kanban/certbot/config/live/kanban.uiseoya.com/privkey.pem;
+    ssl_certificate     /path/to/fullchain.pem;
+    ssl_certificate_key /path/to/privkey.pem;
     ssl_protocols       TLSv1.2 TLSv1.3;
     ssl_ciphers         HIGH:!aNULL:!MD5;
 
-    access_log /opt/homebrew/var/log/nginx/kanban.access.log;
-    error_log  /opt/homebrew/var/log/nginx/kanban.error.log;
+    access_log /var/log/nginx/kanban.access.log;
+    error_log  /var/log/nginx/kanban.error.log;
 
     client_max_body_size 12m;
 

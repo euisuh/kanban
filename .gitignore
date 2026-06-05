@@ -11,3 +11,7 @@ data/
 *.pyc
 app/static/uploads/*
 !app/static/uploads/.gitkeep
+.claude/
+designer-brief.txt
+nginx/kanban.uiseoya.com.conf
+scripts/
