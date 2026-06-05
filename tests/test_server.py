@@ -18,18 +18,21 @@ class HandlerForTest(KanbanHandler):
         return
 
 
-def _clear_creds() -> tuple[str | None, str | None]:
+def _clear_creds() -> tuple[str | None, str | None, str | None]:
     return (
         os.environ.pop("KANBAN_CREDENTIAL", None),
         os.environ.pop("KANBAN_CREDENTIALS", None),
+        os.environ.pop("KANBAN_DEMO_CREDENTIAL", None),
     )
 
 
-def _restore_creds(single: str | None, multi: str | None) -> None:
+def _restore_creds(single: str | None, multi: str | None, demo: str | None) -> None:
     if single is not None:
         os.environ["KANBAN_CREDENTIAL"] = single
     if multi is not None:
         os.environ["KANBAN_CREDENTIALS"] = multi
+    if demo is not None:
+        os.environ["KANBAN_DEMO_CREDENTIAL"] = demo
 
 
 def _png_bytes() -> bytes:
@@ -177,6 +180,42 @@ def test_per_user_boards_isolated(tmp_path: Path) -> None:
         assert status == 401
     finally:
         os.environ.pop("KANBAN_CREDENTIALS", None)
+        _stop(server, thread)
+
+
+def test_demo_credential_adds_isolated_demo_board(tmp_path: Path) -> None:
+    os.environ["KANBAN_CREDENTIAL"] = "kanban:secret"
+    os.environ["KANBAN_DEMO_CREDENTIAL"] = "demo:demo"
+    server, thread, port = _start(tmp_path)
+    admin_auth = "Basic " + base64.b64encode(b"kanban:secret").decode()
+    demo_auth = "Basic " + base64.b64encode(b"demo:demo").decode()
+    try:
+        status, card = request(
+            port, "POST", "/api/cards",
+            {"title": "Admin task", "notes": "", "column": "backlog"},
+            auth=admin_auth,
+        )
+        assert status == 201
+
+        status, demo_board = request(port, "GET", "/api/board", auth=demo_auth)
+        assert status == 200
+        assert not any(c["title"] == "Admin task" for c in demo_board["cards"])
+
+        status, _ = request(
+            port, "POST", "/api/cards",
+            {"title": "Demo task", "notes": "", "column": "backlog"},
+            auth=demo_auth,
+        )
+        assert status == 201
+        assert (tmp_path / "demo" / "board.json").exists()
+
+        status, admin_board = request(port, "GET", "/api/board", auth=admin_auth)
+        assert status == 200
+        assert any(c["title"] == "Admin task" for c in admin_board["cards"])
+        assert not any(c["title"] == "Demo task" for c in admin_board["cards"])
+    finally:
+        os.environ.pop("KANBAN_CREDENTIAL", None)
+        os.environ.pop("KANBAN_DEMO_CREDENTIAL", None)
         _stop(server, thread)
 
 
