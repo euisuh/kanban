@@ -48,6 +48,38 @@ def _uploads_root() -> Path:
     return Path(os.environ.get("KANBAN_UPLOADS", str(DEFAULT_UPLOADS))).resolve()
 
 
+def _base_path() -> str:
+    raw = os.environ.get("KANBAN_BASE_PATH", "").strip()
+    if not raw or raw == "/":
+        return ""
+    return "/" + raw.strip("/")
+
+
+def _demo_base_path() -> str:
+    raw = os.environ.get("KANBAN_DEMO_BASE_PATH", "").strip()
+    if not raw or raw == "/":
+        return ""
+    return "/" + raw.strip("/")
+
+
+def _known_base_paths() -> tuple[str, ...]:
+    return tuple(path for path in (_demo_base_path(), _base_path()) if path)
+
+
+def _strip_base_path(path: str) -> str:
+    for base in _known_base_paths():
+        if path == base:
+            return "/"
+        if path.startswith(base + "/"):
+            return path[len(base):] or "/"
+    return path
+
+
+def _is_demo_path(path: str) -> bool:
+    base = _demo_base_path()
+    return bool(base and (path == base or path.startswith(base + "/")))
+
+
 _USERNAME_RE = re.compile(r'^[A-Za-z0-9_-]{1,64}$')
 
 # Module-level store cache so concurrent requests share one lock per user.
@@ -152,6 +184,13 @@ class KanbanHandler(BaseHTTPRequestHandler):
     # Override in tests to control where board files land.
     data_root: Path | None = None
 
+    def _request_username(self) -> str | None:
+        parsed = urlparse(self.path)
+        if _is_demo_path(parsed.path):
+            demo = _parse_demo_credential()
+            return demo[0] if demo else "demo"
+        return self._authorized()
+
     def _get_store(self, username: str) -> BoardStore:
         if username and _uses_per_user_store(username):
             root = (self.__class__.data_root or Path(
@@ -178,35 +217,38 @@ class KanbanHandler(BaseHTTPRequestHandler):
             return _store_cache[cache_key]
 
     def do_HEAD(self) -> None:
-        username = self._authorized()
+        username = self._request_username()
         if username is None:
             return
         store = self._get_store(username)
         parsed = urlparse(self.path)
-        if parsed.path == "/api/board":
+        path = _strip_base_path(parsed.path)
+        if path == "/api/board":
             self._json(HTTPStatus.OK, store.load(), send_body=False)
             return
-        self._static(parsed.path, send_body=False)
+        self._static(path, send_body=False)
 
     def do_GET(self) -> None:
-        username = self._authorized()
+        username = self._request_username()
         if username is None:
             return
         store = self._get_store(username)
         parsed = urlparse(self.path)
-        if parsed.path == "/api/board":
+        path = _strip_base_path(parsed.path)
+        if path == "/api/board":
             self._json(HTTPStatus.OK, store.load())
             return
-        self._static(parsed.path)
+        self._static(path)
 
     def do_POST(self) -> None:
-        username = self._authorized()
+        username = self._request_username()
         if username is None:
             return
         store = self._get_store(username)
         parsed = urlparse(self.path)
+        path = _strip_base_path(parsed.path)
 
-        if parsed.path == "/api/cards":
+        if path == "/api/cards":
             payload = self._payload()
             priority = payload.get("priority", 4)
             if not isinstance(priority, int) or isinstance(priority, bool):
@@ -221,7 +263,7 @@ class KanbanHandler(BaseHTTPRequestHandler):
             self._json(HTTPStatus.CREATED, card)
             return
 
-        if parsed.path == "/api/upload":
+        if path == "/api/upload":
             content_type = self.headers.get("content-type", "")
             if not content_type.startswith("multipart/form-data"):
                 self._json(HTTPStatus.BAD_REQUEST, {"error": "multipart/form-data required"})
@@ -263,19 +305,20 @@ class KanbanHandler(BaseHTTPRequestHandler):
         self._json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
 
     def do_PATCH(self) -> None:
-        username = self._authorized()
+        username = self._request_username()
         if username is None:
             return
         store = self._get_store(username)
         parsed = urlparse(self.path)
+        path = _strip_base_path(parsed.path)
         prefix = "/api/cards/"
-        if parsed.path.startswith(prefix):
-            card_id = unquote(parsed.path[len(prefix):])
+        if path.startswith(prefix):
+            card_id = unquote(path[len(prefix):])
             card = store.update_card(card_id, self._payload())
             self._json(HTTPStatus.OK, card)
             return
 
-        if parsed.path == "/api/board/settings":
+        if path == "/api/board/settings":
             settings = store.update_settings(self._payload())
             self._json(HTTPStatus.OK, settings)
             return
@@ -283,14 +326,15 @@ class KanbanHandler(BaseHTTPRequestHandler):
         self._json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
 
     def do_DELETE(self) -> None:
-        username = self._authorized()
+        username = self._request_username()
         if username is None:
             return
         store = self._get_store(username)
         parsed = urlparse(self.path)
+        path = _strip_base_path(parsed.path)
         prefix = "/api/cards/"
-        if parsed.path.startswith(prefix):
-            store.delete_card(unquote(parsed.path[len(prefix):]))
+        if path.startswith(prefix):
+            store.delete_card(unquote(path[len(prefix):]))
             self._json(HTTPStatus.NO_CONTENT, None)
             return
 
