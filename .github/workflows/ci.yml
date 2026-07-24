@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pytest
+      - run: python -m pytest -q
+      - name: Smoke test — server boots and serves the board
+        run: |
+          KANBAN_PORT=8097 KANBAN_DATA=/tmp/board.json python -m app.server &
+          for _ in $(seq 1 20); do
+            curl -fsS http://127.0.0.1:8097/api/board >/dev/null && exit 0
+            sleep 0.5
+          done
+          echo "server did not respond on :8097" >&2
+          exit 1
