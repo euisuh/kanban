@@ -23,6 +23,7 @@ STATIC = ROOT / "static"
 DEFAULT_UPLOADS = ROOT / "static" / "uploads"
 ALLOWED_UPLOAD_MIME = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
+MAX_JSON_BYTES = 1024 * 1024  # 1 MB
 
 _MIME_TO_EXT = {
     "image/jpeg": ".jpg",
@@ -254,10 +255,10 @@ class KanbanHandler(BaseHTTPRequestHandler):
             if not isinstance(priority, int) or isinstance(priority, bool):
                 raise ValueError("Priority must be 1–4")
             card = store.create_card(
-                str(payload.get("title", "")),
-                str(payload.get("notes", "")),
+                payload.get("title", ""),
+                payload.get("notes", ""),
                 str(payload.get("column", "backlog")),
-                project=str(payload.get("project", "")),
+                project=payload.get("project", ""),
                 priority=priority,
             )
             self._json(HTTPStatus.CREATED, card)
@@ -379,6 +380,8 @@ class KanbanHandler(BaseHTTPRequestHandler):
         length = int(self.headers.get("content-length", "0") or "0")
         if length <= 0:
             return {}
+        if length > MAX_JSON_BYTES:
+            raise ValueError("Request body too large")
         try:
             raw = self.rfile.read(length).decode("utf-8")
             payload = json.loads(raw)
@@ -407,6 +410,7 @@ class KanbanHandler(BaseHTTPRequestHandler):
         body = target.read_bytes()
         self.send_response(HTTPStatus.OK)
         self.send_header("content-type", mime or "application/octet-stream")
+        self.send_header("x-content-type-options", "nosniff")
         self.send_header("content-length", str(len(body)))
         self.end_headers()
         if send_body:
@@ -420,6 +424,7 @@ class KanbanHandler(BaseHTTPRequestHandler):
             return
         data = json.dumps(body).encode("utf-8")
         self.send_header("content-type", "application/json")
+        self.send_header("x-content-type-options", "nosniff")
         self.send_header("content-length", str(len(data)))
         self.end_headers()
         if send_body:
@@ -428,8 +433,13 @@ class KanbanHandler(BaseHTTPRequestHandler):
     def handle_one_request(self) -> None:
         try:
             super().handle_one_request()
-        except (ValueError, KeyError, TypeError) as exc:
+        except KeyError:
+            self._json(HTTPStatus.NOT_FOUND, {"error": "Card not found"})
+        except (ValueError, TypeError) as exc:
             self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc).strip("'")})
+        except Exception as exc:  # e.g. unreadable board file; keep the connection answerable
+            print(f"ERROR: {exc!r}")
+            self._json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "Internal server error"})
 
 
 def main() -> None:
