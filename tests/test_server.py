@@ -438,3 +438,69 @@ def test_invalid_username_characters_rejected(tmp_path: Path) -> None:
     finally:
         os.environ.pop("KANBAN_CREDENTIALS", None)
         _stop(server, thread)
+
+
+def test_unknown_card_is_404_and_bad_input_is_400(tmp_path: Path) -> None:
+    saved = _clear_creds()
+    server, thread, port = _start(tmp_path)
+    try:
+        assert request(port, "PATCH", "/api/cards/nope", {"title": "x"})[0] == 404
+        assert request(port, "DELETE", "/api/cards/nope")[0] == 404
+        assert request(port, "POST", "/api/cards", {"title": "x" * 201})[0] == 400
+        assert request(port, "POST", "/api/cards", {"title": None})[0] == 400
+        assert request(port, "POST", "/api/cards", {"title": "ok", "column": "nope"})[0] == 400
+    finally:
+        _stop(server, thread)
+        _restore_creds(*saved)
+
+
+def test_oversized_json_body_rejected(tmp_path: Path) -> None:
+    saved = _clear_creds()
+    server, thread, port = _start(tmp_path)
+    try:
+        # Declare a 2 MB body without sending it: the server must answer from the header alone.
+        import socket
+
+        with socket.create_connection(("127.0.0.1", port), timeout=2) as sock:
+            sock.sendall(
+                b"POST /api/cards HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n"
+                b"Content-Length: 2097152\r\n\r\n"
+            )
+            reply = sock.recv(4096)
+        assert reply.startswith(b"HTTP/1.0 400") or reply.startswith(b"HTTP/1.1 400")
+        assert b"too large" in reply
+    finally:
+        _stop(server, thread)
+        _restore_creds(*saved)
+
+
+def test_markup_in_card_text_is_stored_verbatim_and_served_nosniff(tmp_path: Path) -> None:
+    saved = _clear_creds()
+    server, thread, port = _start(tmp_path)
+    try:
+        title = '<img src=x onerror="alert(1)">'
+        status, card = request(port, "POST", "/api/cards", {"title": title})
+        assert status == 201 and card["title"] == title
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+        conn.request("GET", "/api/board")
+        res = conn.getresponse()
+        res.read()
+        assert res.getheader("content-type") == "application/json"
+        assert res.getheader("x-content-type-options") == "nosniff"
+        conn.close()
+    finally:
+        _stop(server, thread)
+        _restore_creds(*saved)
+
+
+def test_corrupt_board_returns_500_and_is_left_alone(tmp_path: Path) -> None:
+    saved = _clear_creds()
+    (tmp_path / "board.json").write_text("{broken")
+    server, thread, port = _start(tmp_path)
+    try:
+        assert request(port, "GET", "/api/board")[0] == 500
+        assert request(port, "POST", "/api/cards", {"title": "x"})[0] == 500
+        assert (tmp_path / "board.json").read_text() == "{broken"
+    finally:
+        _stop(server, thread)
+        _restore_creds(*saved)

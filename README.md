@@ -52,8 +52,8 @@ Browser ──HTTP──► app/server.py ──► app/storage.py ──► dat
   └── static/ ◄───────────┘  index.html + app.js + styles.css (no build step)
 ```
 
-- **`app/server.py`** — one `BaseHTTPRequestHandler`. It routes a handful of JSON endpoints, serves the static files, handles HTTP Basic Auth, and validates multipart image uploads (MIME allowlist, 10 MB cap).
-- **`app/storage.py`** — `BoardStore` owns the JSON file. Every write goes through a temp file plus `os.replace`, so an interrupted save cannot leave a truncated board behind; an `RLock` serialises concurrent requests from the threading server.
+- **`app/server.py`** — one `BaseHTTPRequestHandler`. It routes a handful of JSON endpoints, serves the static files, handles HTTP Basic Auth, and validates multipart image uploads (MIME allowlist, magic-byte check, 10 MB cap). Card text is rendered with `textContent` or HTML-escaped, and JSON and static responses carry `X-Content-Type-Options: nosniff`.
+- **`app/storage.py`** — `BoardStore` owns the JSON file. Every write goes to a temp file in the same directory, is fsynced, then `os.replace`d over `board.json`, so an interrupted save cannot leave a truncated board behind. Each mutation holds an `RLock` across its load and save, so concurrent requests handled by the threading server do not lose each other's changes (covered by `tests/test_concurrency.py`). The lock is per process: run one server process per data directory. If `board.json` is not valid JSON the server answers 500 and leaves the file untouched.
 - **Per-user routing** — when auth is enabled, the authenticated username selects `data/<username>/board.json`. Resolved paths are checked against the data root, so a crafted username cannot escape it. Without auth, everything falls back to a single `KANBAN_DATA` file.
 
 ### HTTP API
@@ -66,6 +66,13 @@ Browser ──HTTP──► app/server.py ──► app/storage.py ──► dat
 | `DELETE` | `/api/cards/<id>` | Delete a card |
 | `PATCH` | `/api/board/settings` | Update settings (background type/value/fit) |
 | `POST` | `/api/upload` | Upload a background image (multipart) |
+
+Errors are JSON `{"error": "..."}`: `400` for invalid input, `404` for an unknown card id, `413` for an upload over 10 MB, `500` for a server-side failure such as an unreadable board file. Input limits: title 200 characters, notes 10,000, project 64, JSON request body 1 MB; `title`, `notes`, and `project` must be strings.
+
+```bash
+curl -X POST localhost:8080/api/cards -d '{"title":"Fix login bug","project":"Auth","priority":1,"column":"todo"}'
+curl -X PATCH localhost:8080/api/cards/<id> -d '{"column":"doing"}'
+```
 
 ## Quick start
 
@@ -124,6 +131,7 @@ app/
 tests/
   test_server.py     # endpoint, auth, upload, and path-safety tests
   test_storage.py    # board normalisation and atomic-write tests
+  test_concurrency.py # concurrent writers, corrupt-file handling, input limits
 nginx/           # sample TLS reverse proxy config
 docs/            # screenshots, design notes
 Dockerfile       # python:3.12-slim, non-root user
@@ -146,8 +154,8 @@ A sample TLS reverse proxy config is at [`nginx/kanban.conf.example`](nginx/kanb
 These are deliberate trade-offs for a single-file, no-database board — worth knowing before you deploy it:
 
 - **HTTP Basic Auth only.** No sessions, no password reset, no OAuth. Passwords come from environment variables. Run it behind TLS.
-- **No real-time sync.** Two browsers editing the same board will overwrite each other; the last write wins. There is no websocket and no polling.
-- **JSON file, not a database.** Fine for thousands of cards on one board; not built for large datasets, queries, or concurrent writers at scale.
+- **No real-time sync.** Two browsers editing the same card will overwrite each other; the last write wins. There is no websocket and no polling.
+- **JSON file, not a database.** The whole file is rewritten on every change. Writes are serialised within one server process only; do not point two processes at the same data directory.
 - **No card history, undo, comments, attachments, due dates, or assignees.**
 - **Fixed columns.** The five columns (Backlog / To Do / In Progress / In Review / Done) are defined in code and are not editable from the UI.
 - **Backups are your job.** Deleting `data/` deletes the board.
